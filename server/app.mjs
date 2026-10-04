@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { hashPassword, verifyPassword } from './password.mjs';
 import { readPatientHistory, reviewPatientHistory } from './patient-history.mjs';
+import { accountSecurity } from './account-security.mjs';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const hash = token => createHash('sha256').update(token).digest('hex');
 function fail(status, code) { throw Object.assign(new Error(code), { status }); }
@@ -19,6 +20,7 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
   if (!db?.query || !origin || new URL(origin).origin !== origin || (production && !origin.startsWith('https://'))) throw new Error('VALID_ORIGIN_AND_DB_REQUIRED');
   const cookieName = production ? '__Host-aqlan_session' : 'aqlan_session';
   const failures = new Map();
+  const account = accountSecurity({db,now});
   const dummy = hashPassword(randomBytes(32).toString('hex'));
   const cookie = (value, age) => `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${production ? '; Secure' : ''}`;
   async function permission(actor, branch, code) { await db.query('SELECT clinic.require_permission($1,$2,$3)', [actor,branch,code]); }
@@ -38,7 +40,7 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
       const url = new URL(req.url,origin), path = url.pathname;
       if (req.method === 'GET' && path === '/health/live') return send(200,{live:true});
       if (req.method === 'GET' && path === '/health/ready') {
-        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<6) throw new Error(); return send(200,{ready:true}); }
+        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<7) throw new Error(); return send(200,{ready:true}); }
         catch { return send(503,{ready:false}); }
       }
       if (!path.startsWith('/api/')) {
@@ -62,20 +64,36 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
         if (failures.size>10000) fail(429,'TRY_LATER');
         if (keys.some(key=>(failures.get(key)?.count||0)>=5)) fail(429,'TRY_LATER');
         for (const key of keys) { const state=failures.get(key)||{count:0,until:now()+15*60*1000}; state.count++; failures.set(key,state); }
-        const r=await db.query('SELECT a.staff_id,a.password_hash FROM clinic.login_account a JOIN clinic.staff s ON s.id=a.staff_id WHERE a.username=$1 AND s.active',[username]);
+        const r=await db.query('SELECT a.staff_id,a.password_hash,a.credential_version FROM clinic.login_account a JOIN clinic.staff s ON s.id=a.staff_id WHERE a.username=$1 AND s.active',[username]);
         if (!await verifyPassword(input.password,r.rows[0]?.password_hash || await dummy) || !r.rows.length) fail(401,'INVALID_CREDENTIALS');
         const token=randomBytes(32).toString('hex');
-        await db.query("INSERT INTO clinic.session(token_hash,staff_id,expires_at) VALUES($1,$2,now()+interval '8 hours')",[hash(token),r.rows[0].staff_id]);
+        // The SQL lock/version check prevents an old-password login racing a
+        // password change from creating a valid session after revocation.
+        await db.query('SELECT clinic.issue_session($1,$2,$3)',[r.rows[0].staff_id,r.rows[0].credential_version,hash(token)]);
         // Preserve source-IP budget; rotating valid users must not bypass failed-account limits.
         for (const key of keys) { const state=failures.get(key); if(state) { state.count--; if(state.count<=0) failures.delete(key); } }
         res.setHeader('Set-Cookie',cookie(token,28800)); return send(200,{ok:true});
       }
       const token=(req.headers.cookie||'').split(';').map(v=>v.trim()).find(v=>v.startsWith(`${cookieName}=`))?.slice(cookieName.length+1);
       if (!token || !/^[a-f0-9]{64}$/.test(token)) fail(401,'AUTH_REQUIRED');
-      const session=await db.query('SELECT s.id,s.display_name,a.username FROM clinic.session t JOIN clinic.staff s ON s.id=t.staff_id JOIN clinic.login_account a ON a.staff_id=s.id WHERE t.token_hash=$1 AND t.expires_at>now() AND s.active',[hash(token)]);
+      const session=await db.query('SELECT s.id,s.display_name,a.username,t.id AS session_id FROM clinic.session t JOIN clinic.staff s ON s.id=t.staff_id JOIN clinic.login_account a ON a.staff_id=s.id WHERE t.token_hash=$1 AND t.expires_at>now() AND s.active AND t.credential_version=a.credential_version',[hash(token)]);
       const user=session.rows[0]; if (!user) fail(401,'AUTH_REQUIRED');
-      if (path==='/api/me' && req.method==='GET') return send(200,{user});
-      if (path==='/api/logout' && req.method==='POST') { await body(req); await db.query('DELETE FROM clinic.session WHERE token_hash=$1',[hash(token)]); res.setHeader('Set-Cookie',cookie('',0)); return send(200,{ok:true}); }
+      if (path==='/api/me' && req.method==='GET') return send(200,{user:{id:user.id,display_name:user.display_name,username:user.username}});
+      if (path==='/api/logout' && req.method==='POST') { await body(req); await account.revoke(user.id,hash(token),user.session_id); res.setHeader('Set-Cookie',cookie('',0)); return send(200,{ok:true}); }
+      if(path==='/api/account/sessions'&&req.method==='GET') return send(200,await account.sessions(user.id,hash(token)));
+      if(path==='/api/account/password'&&req.method==='POST') {
+        const changed=await account.password(user.id,hash(token),await body(req));
+        res.setHeader('Set-Cookie',cookie('',0)); return send(200,changed);
+      }
+      if(path==='/api/account/sessions/revoke-others'&&req.method==='POST') {
+        await body(req); return send(200,await account.revokeOthers(user.id,hash(token)));
+      }
+      const revokeRoute=path.match(/^\/api\/account\/sessions\/([^/]+)\/revoke$/);
+      if(revokeRoute&&req.method==='POST') {
+        await body(req); const revoked=await account.revoke(user.id,hash(token),revokeRoute[1]);
+        if(revoked.signedOut) res.setHeader('Set-Cookie',cookie('',0));
+        return send(200,revoked);
+      }
       if (path==='/api/branches' && req.method==='GET') {
         const r=await db.query('SELECT b.id,b.name,b.timezone,array_agg(DISTINCT rp.permission) AS permissions FROM clinic.branch b JOIN clinic.membership m ON m.branch_id=b.id JOIN clinic.role_permission rp ON rp.role_id=m.role_id WHERE m.staff_id=$1 AND b.active GROUP BY b.id ORDER BY b.name',[user.id]); return send(200,{branches:r.rows});
       }
@@ -133,6 +151,7 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
           coalesce((SELECT jsonb_agg(e ORDER BY e.recorded_at,e.id) FROM entries e),'[]'::jsonb) AS entries`,[patient,branch]);
       return send(200,statement.rows[0]);
     } catch(e) {
+      if(e.code==='42501'&&e.message==='AUTH_REQUIRED') { e.status=401; }
       const known=e.status || (e.code==='42501'?403:e.code==='P0002'?404:e.code?.startsWith('23')?409:['P0001','22P02','22007','22008','22003'].includes(e.code)?400:500);
       const safeCode=e.status?e.message:e.code==='42501'?'FORBIDDEN':e.code==='P0002'?'NOT_FOUND':e.code==='P0001'&&/^[A-Z_]+$/.test(e.message)?e.message:known===409?'CONFLICT':known===400?'INVALID_INPUT':'INTERNAL_ERROR';
       if(!res.headersSent) send(known,{error:safeCode}); else res.destroy();
