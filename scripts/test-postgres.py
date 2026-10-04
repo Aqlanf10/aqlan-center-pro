@@ -8,13 +8,14 @@ import sys
 import time
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
+from pg_support import connection_environment
 
 url = os.environ.get('TEST_DATABASE_URL', '')
 parsed = urlparse(url)
 if parsed.scheme not in ('postgres', 'postgresql') or not unquote(parsed.path[1:]).endswith('_test'):
     sys.exit('TEST_DATABASE_URL must name a disposable database ending in _test.')
-env = dict(os.environ, PGDATABASE=url, PGCONNECT_TIMEOUT='10',
-           PGOPTIONS='-c statement_timeout=12000 -c lock_timeout=10000')
+env = connection_environment(url)
+env['PGOPTIONS'] = '-c statement_timeout=12000 -c lock_timeout=10000'
 args = ['psql', '-X', '--no-password', '-qAt', '--set=ON_ERROR_STOP=1']
 
 

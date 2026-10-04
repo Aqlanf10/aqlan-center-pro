@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from pg_support import connection_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,7 +37,7 @@ def main():
         sys.exit('No migrations found.')
     chunks.append(f"DO $$ BEGIN IF EXISTS(SELECT 1 FROM public.aqlan_schema_migration WHERE version>{len(files)}) THEN RAISE EXCEPTION 'DATABASE_NEWER_THAN_THIS_RELEASE'; END IF; END $$;")
     # Keep connection credentials out of process arguments and normal logs.
-    environment = dict(os.environ, PGDATABASE=url, PGCONNECT_TIMEOUT='10')
+    environment = connection_environment(url)
     result = subprocess.run(['psql', '-X', '--no-password', '--set=ON_ERROR_STOP=1', '--single-transaction', '--file=-'],
                             input='\n'.join(chunks), text=True, env=environment)
     sys.exit(result.returncode)

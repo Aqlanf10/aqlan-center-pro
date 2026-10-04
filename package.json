@@ -14,5 +14,8 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8"
+  },
+  "dependencies": {
+    "pg": "8.23.0"
   }
 }
