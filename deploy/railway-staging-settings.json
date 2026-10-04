@@ -1,0 +1,47 @@
+{
+  "description": "Nonsecret record of explicitly applied Railway staging settings; Railway does not automatically read this manifest.",
+  "projectId": "a0d375a9-fbaa-4342-8cd7-766477c4753c",
+  "environmentId": "e058251a-0b65-475a-a3eb-301c9d0f7ab8",
+  "environmentName": "staging",
+  "services": {
+    "migrate": {
+      "serviceId": "20693ac2-43a4-450f-9715-ca87bbf326be",
+      "build": { "builder": "DOCKERFILE", "dockerfilePath": "Dockerfile.migrate" },
+      "deploy": { "startCommand": "python3 scripts/migrate.py", "restartPolicyType": "NEVER" },
+      "variables": {
+        "NODE_ENV": "production",
+        "DATABASE_URL": "${{PostgreSQL17.DATABASE_URL}}",
+        "RUNTIME_USERNAME": "aqlan_runtime"
+      },
+      "managedSecrets": ["RUNTIME_PASSWORD"],
+      "managedPublicTrust": ["DATABASE_CA_CERT"],
+      "publicDomain": false,
+      "sourceConnected": false
+    },
+    "web": {
+      "serviceId": "e1d67655-9625-45c8-86ae-a970cb4c11b0",
+      "build": { "builder": "DOCKERFILE", "dockerfilePath": "Dockerfile" },
+      "deploy": {
+        "healthcheckPath": "/health/ready",
+        "healthcheckTimeout": 60,
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 3
+      },
+      "variables": {
+        "NODE_ENV": "production",
+        "DATABASE_URL": "postgresql://aqlan_runtime:${{migrate.RUNTIME_PASSWORD}}@${{PostgreSQL17.RAILWAY_PRIVATE_DOMAIN}}:5432/${{PostgreSQL17.PGDATABASE}}"
+      },
+      "managedPublicTrust": ["DATABASE_CA_CERT"],
+      "pendingVariables": ["APP_ORIGIN"],
+      "publicDomain": false,
+      "sourceConnected": false
+    }
+  },
+  "constraints": [
+    "Deploy exact reviewed Git archive only after final CI succeeds.",
+    "Never pass the migration administrator connection or its password to web.",
+    "Provision the actual restricted runtime database role only after migrations.",
+    "Set APP_ORIGIN to the actual HTTPS domain before web deployment.",
+    "Verify DATABASE_CA_CERT with rejectUnauthorized true; do not add conflicting URL SSL overrides."
+  ]
+}
