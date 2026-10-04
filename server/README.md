@@ -4,6 +4,13 @@
 
 Required environment: `DATABASE_URL` (runtime role, not migration owner), `APP_ORIGIN` (exact origin, no trailing slash), `NODE_ENV=production` and Railway `PORT`. Production requires HTTPS origin and rejects superuser/schema-owner DB identities. The `pg` driver is required for production; missing configuration/dependency fails closed. PGlite is used only by tests, never as a production fallback.
 
+For a private database certificate issuer, supply its PEM trust root as
+`DATABASE_CA_CERT`. The driver enables TLS with `rejectUnauthorized: true`,
+validating the peer certificate and hostname. Do not add SSL query parameters to
+`DATABASE_URL` with this setting: they can replace the driver's CA configuration,
+so the application rejects that combination. No certificate or password is
+written to the repository. See the [driver SSL contract](https://node-postgres.com/features/ssl).
+
 ## Authentication
 
 - `POST /api/login` JSON `{username,password}`; generic invalid-credential response.
