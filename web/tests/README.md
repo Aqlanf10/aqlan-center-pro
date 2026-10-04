@@ -17,3 +17,9 @@ The payment scenario deliberately drops a response after the server commits. The
 The scenario also expires the session while that outcome is unknown. A 401 preserves the locked original dialog and request key, with a same-origin `noopener` sign-in link to a new tab. Reauthenticating with the same account restores the shared session cookie; returning to the original tab retries that exact request and still produces one payment. Logging in as another account cannot bypass the server's actor-bound idempotency checks.
 
 These assertions cover the current foundation, not the unimplemented specialty workflows, full accessibility, Safari/mobile devices, provider integrations, Railway deployment, concurrent financial transactions, or production readiness. Those need their own evidence.
+
+## Patient history slice (PAT-03 partial)
+
+`patient-history-journey.mjs` is part of the same explicit browser run and requires migration 006 and the real history routes. It saves and reopens a branch-scoped review, distinguishes unknown/none/reported information, preserves the original clinical text, escapes injected markup, reads immutable prior reviews and reviewer names, rejects stale writes, retries a response lost after commit without a second revision, verifies branch isolation and a read-only clinical role, and checks Arabic/English mobile layouts. A delayed real history response is also released only after switching to a second synthetic patient; it must not change that patient's history or allergy alert.
+
+This is a dated medical/dental/allergy review slice. Consent documents, guardian authorization, full specialty assessments and center-wide clinical reconciliation are separate requirements, not completed by these forms or tests.
