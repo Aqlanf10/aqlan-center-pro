@@ -76,6 +76,16 @@ try {
  assert.equal(await page.locator('[name="amount"]').isDisabled(),true);
  assert.equal(await f.balance(plan),'900.00','Payment committed before its response was lost');
  const retryKey=await page.locator('#command-form').getAttribute('data-key');
+ await db.query("UPDATE clinic.session SET expires_at=now()-interval '1 second' WHERE staff_id=$1",[f.actor]);
+ await page.locator('#command-form [type="submit"]').click();
+ const loginRecovery=page.locator('#form-error a[target="_blank"]');await loginRecovery.waitFor();
+ assert.equal(await page.locator('#modal').evaluate(modal=>modal.open),true,'Expired session must not discard the uncertain dialog');
+ assert.equal(await page.locator('#command-form').getAttribute('data-key'),retryKey);
+ assert.equal(await page.locator('[name="amount"]').isDisabled(),true);
+ assert.equal(await loginRecovery.getAttribute('href'),'/');assert.equal(await loginRecovery.getAttribute('rel'),'noopener');
+ const reauthReady=page.context().waitForEvent('page');await loginRecovery.click();const reauth=await reauthReady;
+ await reauth.locator('#login-form').waitFor();await reauth.locator('[name="username"]').fill('browser.fixture');await reauth.locator('[name="password"]').fill(password);
+ await reauth.locator('#login-form [type="submit"]').click();await reauth.locator('[data-action="new-patient"]').first().waitFor();await reauth.close();
  await submit();assert.equal(await f.balance(plan),'900.00','Unchanged retry must return the committed payment, not collect again');
  assert.ok(retryKey);assert.equal((await db.query('SELECT count(*)::int AS count FROM clinic.payment p JOIN clinic.journal j ON j.id=p.journal_id WHERE j.plan_id=$1',[plan])).rows[0].count,1);
  await action('locale').click();assert.equal(await page.locator('html').getAttribute('dir'),'ltr');
