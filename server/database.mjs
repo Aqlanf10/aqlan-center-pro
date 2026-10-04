@@ -17,6 +17,7 @@ export async function connectDatabase(env = process.env) {
   const options=databaseOptions(env);
   const { Pool } = await import('pg');
   const pool = new Pool(options);
-  await pool.query('SELECT 1');
+  try { await pool.query('SELECT 1'); }
+  catch(error) { await pool.end(); throw error; }
   return pool;
 }
