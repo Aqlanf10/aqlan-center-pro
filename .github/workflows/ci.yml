@@ -12,6 +12,17 @@ jobs:
   node:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      browser-postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: aqlan_browser_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aqlan_browser_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -23,6 +34,9 @@ jobs:
       - name: Install browser rehearsal dependency
         run: npx playwright install --with-deps chromium
       - name: Arabic and English browser rehearsal
+        env:
+          BROWSER_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/aqlan_browser_test
+          TZ: Asia/Aden
         run: npm run test:browser
       - name: Production image build
         run: docker build --tag aqlan-center-pro:ci .

@@ -25,9 +25,24 @@ Required environment: `DATABASE_URL` (runtime role, not migration owner), `APP_O
 
 All patient routes require patient.read in the requested branch and patient membership in that branch. Record properties follow SQL snake_case. No public patient data route exists.
 
+Calendar dates (`birth_date`, `as_of_date`, `occurred_on`, `effective_date`) are
+`YYYY-MM-DD` strings or null, never instants converted through the host timezone.
+Statement balances and entries use one PostgreSQL statement snapshot; all monetary
+fields, including nested line debit/credit and payment exchange rates, are exact
+decimal strings. Clients must not convert ledger amounts through floating point.
+
 ## Commands
 
 `POST /api/branches/:branch/commands` accepts `{key,command,payload}`. Key must be a UUID unique to the intended operation, reused only on retries of that same payload. Command/payload contracts are in `db/002_commands.sql`. Decimal values are strings, never floating-point JSON numbers. Actor comes exclusively from the authenticated session. Response is the real committed SQL command result `{id,command}`. Errors are `{error:CODE}` and never include SQL or secrets.
+
+Migration 005 updates that command contract: `legacy.review`, `legacy.activate`
+and `plan.activate` require numeric `expectedVersion` from the displayed plan's
+`version`. Review and activation each increment the version. A stale snapshot
+returns `STALE_PLAN_VERSION` without posting; the operator must read and review
+the current values explicitly. Exact retries keep the original version and key.
+All required permissions, including payload-dependent financial permissions,
+are rechecked before returning a saved result. Previous migration files remain
+immutable; apply the numbered upgrade before deploying this client.
 
 ## Operator bootstrap
 
