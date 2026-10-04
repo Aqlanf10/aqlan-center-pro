@@ -39,6 +39,8 @@ Object.assign(messages,{
  'أدخل تاريخ مراجعة صالحًا لا يتجاوز اليوم في هذا الفرع.':'Enter a valid review date no later than today in this branch.',
  'راجع التاريخ الطبي والسني والحساسية من تبويب التاريخ الطبي قبل العلاج. المخطط السريري التفصيلي والموافقات مسارات مستقلة لم تكتمل بعد.':'Review medical history, dental history and allergies in the Medical history tab before treatment. Detailed charting and clinical consent are separate workflows still in development.'
 });
+Object.assign(messages,{'جارٍ إعادة قراءة بيانات المريض…':'Reloading patient data…','تعذر إعادة قراءة بيانات المريض':'Patient data could not be reloaded','المعلومات السابقة محجوبة حتى نجاح إعادة القراءة. إعادة القراءة لا تعيد تنفيذ الحفظ.':'Previous information is hidden until reloading succeeds. Reloading does not repeat the save.','إعادة قراءة الملف':'Reload patient record'});
+messages['تسجيل هذه المراجعة لا يُعد موافقة طبية أو توقيعًا عليها.']='Recording this review does not constitute medical consent or a signature.';
 let locale='ar';try{locale=localStorage.getItem('aqlan.locale')==='en'?'en':'ar';}catch{}
 export const getLocale=()=>locale;
 export function setLocale(value){locale=value==='en'?'en':'ar';try{localStorage.setItem('aqlan.locale',locale);}catch{}document.documentElement.lang=locale;document.documentElement.dir=locale==='ar'?'rtl':'ltr';}
