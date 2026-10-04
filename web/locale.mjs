@@ -12,6 +12,35 @@ Object.assign(messages,{'أدخل سبب مراجعة المبالغ الساب�
 Object.assign(messages,{'تغيرت الخطة منذ فتح المراجعة. أغلق النافذة وأعد فتح ملف المريض لمراجعة أحدث المبالغ قبل الاعتماد.':'The plan changed after this review was opened. Close this dialog and reopen the patient record to review the latest amounts before approval.','تعذر التحقق من إصدار الخطة. أعد تحميل ملف المريض قبل مراجعتها.':'The plan version could not be verified. Reload the patient record before reviewing it.'});
 Object.assign(messages,{'نتيجة الحفظ غير محسومة؛ قد تكون العملية قد حُفظت. أعد المحاولة بنفس البيانات للتحقق دون تكرار. لا تغلق الصفحة أو تبدأ عملية بديلة قبل حسم النتيجة.':'The save outcome is unknown; the operation may already be saved. Retry the same details to verify without duplication. Keep this page open and do not start a replacement operation until the outcome is resolved.'});
 Object.assign(messages,{'انتهت الجلسة ونتيجة العملية ما زالت غير محسومة. سجّل الدخول بنفس الحساب في تبويب جديد، ثم عد إلى هذه النافذة وأعد محاولة التحقق. لا تبدأ عملية بديلة.':'Your session expired and the operation outcome is still unknown. Sign in with the same account in a new tab, then return here and retry verification. Do not start a replacement operation.','تسجيل الدخول في تبويب جديد':'Sign in in a new tab'});
+Object.assign(messages,{
+ 'التاريخ الطبي':'Medical history','التاريخ السني':'Dental history','الحساسية':'Allergies',
+ 'غير معروف / لم يُراجع':'Unknown / not reviewed','لا شيء مُبلّغ عنه':'None reported','معلومات مُبلّغ عنها':'Information reported',
+ 'إفادة المريض':'Patient report','إفادة ولي الأمر':'Guardian report','مراجعة سجل سابق':'Prior record review','مراجعة الطبيب':'Clinician review',
+ 'لم تُسجل مراجعة للحساسية في هذا الفرع':'No allergy review recorded in this branch',
+ 'الحساسية غير معروفة في آخر مراجعة لهذا الفرع':'Allergies unknown in this branch’s latest review',
+ 'لا توجد حساسية مُبلّغ عنها في آخر مراجعة لهذا الفرع':'No allergies reported in this branch’s latest review',
+ 'حساسية مُبلّغ عنها في هذا الفرع':'Allergies reported in this branch',
+ 'ملخص الحساسية في الفرع':'Branch allergy summary','تاريخ المراجعة:':'Review date:',
+ 'هذا ملخص مراجعة الفرع الحالي؛ لا يثبت حالة المريض في جميع الفروع.':'This summarizes the current branch’s review; it does not establish the patient’s status across all branches.',
+ 'تاريخ المراجعة':'Review date','مصدر المعلومات':'Information source','سجّل المراجعة':'Recorded by','وقت الحفظ':'Saved at','سبب المراجعة:':'Review reason:',
+ 'التاريخ الطبي والسني والحساسية':'Medical history, dental history & allergies','تسجيل مراجعة جديدة':'Record a new review',
+ 'كل مراجعة محفوظة بتاريخها ومصدرها ومن سجّلها في هذا الفرع. غياب المعلومة ليس نفيًا للحساسية أو المرض. تُحفظ المراجعات السابقة ولا تُستبدل بصمت.':'Each review retains its date, source and recorder in this branch. Missing information does not rule out allergies or illness. Previous reviews remain in the record.',
+ 'آخر مراجعة في هذا الفرع':'Latest review in this branch','الإصدار':'Version',
+ 'لم يُراجع التاريخ الطبي في هذا الفرع بعد':'Medical history has not been reviewed in this branch',
+ 'ابدأ بمراجعة مع المريض أو ولي الأمر أو مصدر موثّق. لا تفترض أن غياب السجل يعني عدم وجود أمراض أو حساسية.':'Start a review with the patient, guardian or a documented source. An absent record does not mean there are no illnesses or allergies.',
+ 'المراجعات السابقة في هذا الفرع':'Previous reviews in this branch','لا توجد مراجعات سابقة.':'No previous reviews.',
+ 'الموافقات الطبية وتوقيعها مسار مستقل لم يُنفذ في هذه الشاشة.':'Clinical consent and signatures are a separate workflow not implemented on this screen.',
+ 'هذه مراجعة جديدة للفرع الحالي. اختر «غير معروف» عند عدم التحقق، و«لا شيء مُبلّغ عنه» فقط بعد المراجعة. لن تمحو هذه المراجعة السجل السابق.':'This is a new review for the current branch. Choose “Unknown” when unverified and “None reported” only after review. Previous records will remain unchanged.',
+ 'حالة المعلومات':'Information status','التفاصيل المُبلّغ عنها':'Reported details','اختر مصدر المراجعة':'Choose the review source','سبب المراجعة':'Review reason',
+ 'مراجعة التاريخ الطبي والسني والحساسية':'Review medical history, dental history & allergies',
+ 'حُفظت مراجعة أحدث لهذا الفرع. أغلق النافذة وأعد فتح ملف المريض لمراجعة التغيير قبل الحفظ.':'A newer review was saved for this branch. Close this dialog and reopen the patient record to review the change before saving.',
+ 'تعذر التحقق من إصدار التاريخ الطبي. أعد فتح ملف المريض قبل المراجعة.':'The medical history version could not be verified. Reopen the patient record before reviewing.',
+ 'راجع حالات التاريخ الطبي والتفاصيل ومصدر المراجعة وسببها.':'Check the history statuses, details, review source and reason.',
+ 'أدخل تاريخ مراجعة صالحًا لا يتجاوز اليوم في هذا الفرع.':'Enter a valid review date no later than today in this branch.',
+ 'راجع التاريخ الطبي والسني والحساسية من تبويب التاريخ الطبي قبل العلاج. المخطط السريري التفصيلي والموافقات مسارات مستقلة لم تكتمل بعد.':'Review medical history, dental history and allergies in the Medical history tab before treatment. Detailed charting and clinical consent are separate workflows still in development.'
+});
+Object.assign(messages,{'جارٍ إعادة قراءة بيانات المريض…':'Reloading patient data…','تعذر إعادة قراءة بيانات المريض':'Patient data could not be reloaded','المعلومات السابقة محجوبة حتى نجاح إعادة القراءة. إعادة القراءة لا تعيد تنفيذ الحفظ.':'Previous information is hidden until reloading succeeds. Reloading does not repeat the save.','إعادة قراءة الملف':'Reload patient record'});
+messages['تسجيل هذه المراجعة لا يُعد موافقة طبية أو توقيعًا عليها.']='Recording this review does not constitute medical consent or a signature.';
 let locale='ar';try{locale=localStorage.getItem('aqlan.locale')==='en'?'en':'ar';}catch{}
 export const getLocale=()=>locale;
 export function setLocale(value){locale=value==='en'?'en':'ar';try{localStorage.setItem('aqlan.locale',locale);}catch{}document.documentElement.lang=locale;document.documentElement.dir=locale==='ar'?'rtl':'ltr';}

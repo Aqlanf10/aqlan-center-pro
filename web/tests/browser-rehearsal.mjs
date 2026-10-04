@@ -13,6 +13,7 @@ import {PGlite} from '@electric-sql/pglite';
 import {fixture} from '../../tests/helpers/database.mjs';
 import {createApp} from '../../server/app.mjs';
 import {hashPassword} from '../../server/password.mjs';
+import {patientHistoryJourney} from './patient-history-journey.mjs';
 
 async function testDatabase(){
  const migrations=(await readdir(new URL('../../db/',import.meta.url))).filter(name=>/^\d+_.*\.sql$/.test(name)).sort();
@@ -36,7 +37,7 @@ try {
  await new Promise((ok,bad)=>app.once('error',bad).listen(43187,'127.0.0.1',ok));
  browser=await chromium.launch({headless:true,executablePath:process.env.BROWSER_EXECUTABLE});
  const page=await browser.newPage({viewport:{width:1366,height:900}}), errors=[];
- const screenshot=async name=>{if(process.env.BROWSER_ARTIFACT_DIR){await mkdir(process.env.BROWSER_ARTIFACT_DIR,{recursive:true});await page.screenshot({path:resolve(process.env.BROWSER_ARTIFACT_DIR,name),fullPage:true});}};
+ const screenshot=async name=>{if(process.env.BROWSER_ARTIFACT_DIR){await mkdir(process.env.BROWSER_ARTIFACT_DIR,{recursive:true});await page.locator('#notifications .toast').waitFor({state:'detached'});await page.evaluate(()=>{document.activeElement?.blur();window.scrollTo(0,0);});await page.screenshot({path:resolve(process.env.BROWSER_ARTIFACT_DIR,name),fullPage:true});}};
  page.on('pageerror',e=>errors.push(e.message));
  const action=a=>page.locator(`[data-action="${a}"]`).first();
  const fill=async(name,value)=>page.locator(`#command-form [name="${name}"]`).fill(value);
@@ -55,6 +56,9 @@ try {
  await action('new-patient').waitFor();
  await action('new-patient').click();await fill('fullName','مريض تجربة متصفح');await fill('phone','777000001');await fill('birthDate','1990-01-02');await submit();
  assert.match(await page.locator('.patient-meta').innerText(),/1990-01-02/,'Birth dates must not shift through the PostgreSQL driver');
+ const primaryPatient=(await db.query('SELECT patient_id FROM clinic.patient_branch WHERE branch_id=$1',[f.branch])).rows[0].patient_id;
+ const openPrimary=()=>page.locator(`[data-action="open-patient"][data-id="${primaryPatient}"]`).click();
+ await patientHistoryJourney({page,db,fixture:f,screenshot});
  await tab('plans');await action('new-plan').click();
  await fill('title','تقويم الأسنان');await page.locator('[name="specialty"]').selectOption('orthodontics');
  await page.locator('[name="currency"]').selectOption('SAR');await fill('agreed','1000');await fill('progress','تقويم الأسنان');await submit();
@@ -91,7 +95,7 @@ try {
  await action('locale').click();assert.equal(await page.locator('html').getAttribute('dir'),'ltr');
  await screenshot('desktop-en-statement.png');
  await tab('plans');assert.equal(await page.locator('.plan-top h3').innerText(),'تقويم الأسنان');assert.equal(await page.locator('.plan-note').innerText(),'تقويم الأسنان');
- await tab('visits');assert.equal(await page.locator('.text-block').innerText(),'تقويم الأسنان');
+ await tab('visits');assert.equal(await page.locator('#patient-content .text-block').innerText(),'تقويم الأسنان');
  await action('new-visit').click();
  assert.equal(await page.locator('[name="planId"] option').innerText(),'تقويم الأسنان (SAR)','User-entered plan titles must never be translated inside options');
  assert.equal(await page.locator('[name="stepId"] option').last().innerText(),'تقويم الأسنان — 11');
@@ -109,7 +113,7 @@ try {
  assert.equal(await page.locator('[name="expectedVersion"]').inputValue(),String(legacyRow.version),'Stale approval must not silently refresh its captured version');
  assert.equal(await f.balance(legacy),'0');
  await action('close-modal').click();
- await page.locator('[data-action="navigate"][data-id="patients"]').first().click();await action('open-patient').click();await tab('plans');
+ await page.locator('[data-action="navigate"][data-id="patients"]').first().click();await openPrimary();await tab('plans');
  await action('activate-plan').click();await page.locator('#command-form input[type="checkbox"]').check();await submit();
  assert.equal(await f.balance(legacy),'600.00');assert.equal(await f.balance(legacy,'CASH'),'0');
  assert.match(await page.locator('.plan .inline-note').first().innerText(),/2024-01-01/,'Legacy dates must remain the entered calendar date');
@@ -122,7 +126,7 @@ try {
  await page.locator('[data-action="navigate"][data-id="patients"]').first().click();
  await page.locator('#search-form input').fill('بحث لم يرسل');await action('locale').click();assert.equal(await page.locator('#search-form input').inputValue(),'بحث لم يرسل');
  await db.query("DELETE FROM clinic.role_permission WHERE role_id=$1 AND permission='finance.read'",[f.role]);
- await page.reload();await action('open-patient').click();await tab('plans');
+ await page.reload();await openPrimary();await tab('plans');
  assert.equal(await page.locator('[data-action="tab"][data-id="finance"]').count(),0);
  assert.equal(await page.locator('.plan-facts').count(),0,'Financial amounts must be hidden without finance.read');
  await action('new-visit').click();

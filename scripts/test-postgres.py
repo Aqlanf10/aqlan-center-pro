@@ -118,3 +118,48 @@ assert sql(f"SELECT status || ':' || version::text FROM clinic.plan WHERE id='{l
 assert sql(f"SELECT count(*) FROM clinic.journal WHERE plan_id='{legacy}';") == '1'
 assert sql(f"SELECT sum(l.debit-l.credit) FROM clinic.journal j JOIN clinic.journal_line l ON l.journal_id=j.id WHERE j.plan_id='{legacy}' AND l.account='RECEIVABLE';") == '100.00'
 print('PASS: concurrent draft review rejects stale activation; refreshed approval and retry post once')
+
+# PAT-03 reviewed history starts without a head row, so the first-version race is
+# important: two distinct keys at expectedVersion=0 must not both become version 1.
+def history_command(patient_id, payload, key=None):
+    return (f"SELECT clinic.review_patient_history('{actor}','{branch}',{literal(patient_id)},"
+            f"'{key or uuid4()}',{literal(json.dumps(payload))}::jsonb);")
+
+
+history_review = {
+    'expectedVersion': 0,
+    'medical': {'status': 'unknown', 'details': ''},
+    'dental': {'status': 'none', 'details': ''},
+    'allergies': {'status': 'reported', 'details': 'Synthetic allergy for restore test only'},
+    'source': 'patient_report', 'reason': 'Synthetic first review', 'observedOn': '2024-01-02'
+}
+losing_key = str(uuid4())
+code, _, error = race(history_command(patient, history_review),
+                      history_command(patient, history_review, losing_key))
+assert code != 0 and 'STALE_HISTORY_VERSION' in error, error
+assert sql(f"SELECT count(*) FROM clinic.patient_history_revision WHERE patient_id='{patient}' AND branch_id='{branch}';") == '1'
+assert sql(f"SELECT count(*) FROM clinic.operation WHERE branch_id='{branch}' AND key='{losing_key}';") == '0'
+assert sql(f"SELECT count(*) FROM clinic.audit WHERE branch_id='{branch}' AND action='patient.history.review' AND metadata->>'patientId'='{patient}';") == '1'
+print('PASS: concurrent initial history reviews retain one revision; stale operation and audit roll back')
+
+# A new patient's concurrent retries exercise operation locking separately from
+# the optimistic-version lock. Content is synthetic and never printed to logs.
+retry_patient = json.loads(sql(command('patient.create', {'fullName': 'Synthetic history retry'})))['id']
+history_key = str(uuid4())
+code, output, error = race(history_command(retry_patient, history_review, history_key),
+                          history_command(retry_patient, history_review, history_key))
+assert code == 0, error
+saved_history = json.loads(output)
+assert saved_history['command'] == 'patient.history.review' and saved_history['version'] == 1
+assert json.loads(sql(history_command(retry_patient, history_review, history_key))) == saved_history
+assert sql(f"SELECT count(*) FROM clinic.patient_history_revision WHERE patient_id='{retry_patient}' AND branch_id='{branch}';") == '1'
+assert sql(f"SELECT count(*) FROM clinic.audit WHERE entity_id='{saved_history['id']}' AND action='patient.history.review';") == '1'
+print('PASS: concurrent history retries return one immutable revision and one audit event')
+
+# Leave two dated revisions with different statuses for the content-fingerprint
+# restore drill. A copied current state must not erase the earlier unknown value.
+corrected_history = dict(history_review, expectedVersion=1, reason='Synthetic follow-up review',
+                         observedOn='2024-02-03', medical={'status': 'none', 'details': ''})
+sql(history_command(patient, corrected_history))
+assert sql(f"SELECT string_agg(medical->>'status',',' ORDER BY version) FROM clinic.patient_history_revision WHERE patient_id='{patient}' AND branch_id='{branch}';") == 'unknown,none'
+print('PASS: dated history correction preserves the original unknown state and reported allergy')

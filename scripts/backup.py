@@ -26,6 +26,22 @@ def manifest(env, snapshot=None):
     tables = ['patient', 'plan', 'journal', 'journal_line', 'payment', 'audit']
     counts = {name: int(query(env, f'SELECT count(*) FROM clinic.{name};', snapshot)) for name in tables}
     versions = json.loads(query(env, "SELECT json_agg(version ORDER BY version) FROM clinic.schema_version;", snapshot))
+    history_present = query(env, "SELECT to_regclass('clinic.patient_history_revision') IS NOT NULL;", snapshot) == 't'
+    if max(versions or [0]) >= 6 and not history_present:
+        raise RuntimeError('Reviewed-history schema version is present but its revision table is missing.')
+    history = {'present': history_present}
+    if history_present:
+        counts['patient_history_revision'] = int(query(env, 'SELECT count(*) FROM clinic.patient_history_revision;', snapshot))
+        # Stable JSONB key order, explicit chronological ordering and UTC timestamps
+        # fingerprint every immutable field, not just row counts. Never print rows.
+        # Each row is JSON-escaped onto one line, so embedded clinical newlines cannot
+        # create ambiguous record boundaries. Raw history stays out of the manifest.
+        content = query(env, """SELECT (to_jsonb(r) || jsonb_build_object(
+            'observed_on',to_char(r.observed_on,'YYYY-MM-DD'),
+            'reviewed_at',to_char(r.reviewed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))::text
+          FROM clinic.patient_history_revision r
+          ORDER BY r.patient_id,r.branch_id,r.version,r.id;""", snapshot)
+        history['sha256'] = hashlib.sha256(content.encode('utf-8')).hexdigest()
     balances = json.loads(query(env, """SELECT coalesce(json_agg(row_to_json(t) ORDER BY t.branch_id,t.account,t.currency),'[]')
       FROM (SELECT j.branch_id,l.account,l.currency,sum(l.debit)::text AS debit,sum(l.credit)::text AS credit,
        sum(l.debit-l.credit)::text AS balance FROM clinic.journal_line l JOIN clinic.journal j ON j.id=l.journal_id
@@ -38,7 +54,8 @@ def manifest(env, snapshot=None):
         # Catalog metadata is read only; never advance the source sequence.
         settings = json.loads(query(env, "SELECT row_to_json(s) FROM (SELECT increment_by::text,min_value::text,max_value::text,cycle FROM pg_sequences WHERE schemaname='clinic' AND sequencename='" + name.replace("'", "''") + "') s;", snapshot))
         sequences[name] = dict(state, **settings)
-    return {'counts': counts, 'schemaVersions': versions, 'balances': balances, 'sequences': sequences}
+    return {'counts': counts, 'schemaVersions': versions, 'balances': balances,
+            'sequences': sequences, 'patientHistory': history}
 
 
 def backup(url, destination):
