@@ -43,7 +43,7 @@ patient = json.loads(sql(command('patient.create', {'fullName': 'Concurrent Test
 
 def plan():
     identity = json.loads(sql(command('plan.create', {'patientId': patient, 'specialty': 'orthodontics', 'title': 'Concurrent plan', 'origin': 'new', 'currency': 'SAR', 'agreed': '100.00'})))['id']
-    sql(command('plan.activate', {'planId': identity}))
+    sql(command('plan.activate', {'planId': identity, 'expectedVersion': 1}))
     return identity
 
 
@@ -91,3 +91,30 @@ assert json.loads(output)['command'] == 'payment.collect'
 assert sql(f"SELECT count(*) FROM clinic.journal WHERE plan_id='{identity}' AND kind='payment';") == '1'
 assert sql(f"SELECT count(*) FROM clinic.audit WHERE branch_id='{branch}' AND action='payment.collect' AND entity_id={literal(json.loads(output)['id'])};") == '1'
 print('PASS: concurrent retries post one payment and one audit event')
+
+# A reviewer changes a draft while an approver holds an older screen version.
+# The second transaction must acquire the row lock before checking the version.
+legacy = json.loads(sql(command('plan.create', {
+    'patientId': patient, 'specialty': 'orthodontics', 'title': 'Review race',
+    'origin': 'legacy', 'currency': 'SAR', 'agreed': '100.00',
+    'previouslyPaid': '20.00', 'sourceSystem': 'synthetic-concurrency',
+    'sourceRecordId': str(uuid4()), 'asOfDate': '2026-01-01'
+})))['id']
+review = {'planId': legacy, 'agreed': '120.00', 'previouslyPaid': '20.00',
+          'disputed': False, 'reason': 'Verified synthetic source', 'expectedVersion': 1}
+activation_key = str(uuid4())
+code, _, error = race(command('legacy.review', review),
+                      command('legacy.activate', {'planId': legacy, 'expectedVersion': 1}, activation_key))
+assert code != 0 and 'STALE_PLAN_VERSION' in error, error
+assert sql(f"SELECT status || ':' || version::text FROM clinic.plan WHERE id='{legacy}';") == 'draft:2'
+assert sql(f"SELECT count(*) FROM clinic.journal WHERE plan_id='{legacy}';") == '0'
+assert sql(f"SELECT count(*) FROM clinic.operation WHERE branch_id='{branch}' AND key='{activation_key}';") == '0'
+assert sql(f"SELECT count(*) FROM clinic.audit WHERE branch_id='{branch}' AND action='legacy.activate' AND entity_id='{legacy}';") == '0'
+# A refreshed approval uses the reviewed version and posts only the new remainder.
+activation = command('legacy.activate', {'planId': legacy, 'expectedVersion': 2}, activation_key)
+first_result = sql(activation)
+assert sql(activation) == first_result
+assert sql(f"SELECT status || ':' || version::text FROM clinic.plan WHERE id='{legacy}';") == 'active:3'
+assert sql(f"SELECT count(*) FROM clinic.journal WHERE plan_id='{legacy}';") == '1'
+assert sql(f"SELECT sum(l.debit-l.credit) FROM clinic.journal j JOIN clinic.journal_line l ON l.journal_id=j.id WHERE j.plan_id='{legacy}' AND l.account='RECEIVABLE';") == '100.00'
+print('PASS: concurrent draft review rejects stale activation; refreshed approval and retry post once')

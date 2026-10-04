@@ -11,7 +11,7 @@ concurrency:
 jobs:
   node:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -20,8 +20,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Install browser rehearsal dependency
+        run: npx playwright install --with-deps chromium
+      - name: Arabic and English browser rehearsal
+        run: npm run test:browser
       - name: Production image build
         run: docker build --tag aqlan-center-pro:ci .
+      - name: Migration operator image build
+        run: docker build --file Dockerfile.migrate --tag aqlan-center-pro-migrate:ci .
       - name: Production dependency security gate
         run: npm audit --omit=dev --audit-level=high
   postgres:

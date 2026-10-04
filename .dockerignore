@@ -13,3 +13,9 @@ docs
 
 **/*.test.mjs
 __pycache__
+
+web/tests
+work
+outputs
+playwright-report
+test-results

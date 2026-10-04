@@ -1,0 +1,2 @@
+# Migration checksums must match between Windows checkouts and Linux deployment.
+db/*.sql text eol=lf
