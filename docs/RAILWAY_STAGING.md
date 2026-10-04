@@ -7,9 +7,9 @@ Use synthetic patients only. Record the exact Git SHA and CI run before deployme
 
 ## Provisioning record — 2026-10-05, Asia/Aden
 
-The new project's private database has been provisioned. Empty `migrate` and `web`
-services are configured without a source, public domain or deployment. No application or
-migration service has been deployed and no real patient records have been loaded.
+The new project's private database, migration operator and web foundation have
+been deployed from the exact Git archive identified below. The account and branch
+are synthetic staging fixtures; no real patient records have been loaded.
 The existing projects listed above were not modified.
 
 | Resource | Verified value |
@@ -21,21 +21,47 @@ The existing projects listed above were not modified.
 | Database image | `ghcr.io/railwayapp-templates/postgres-ssl:17` |
 | Successful database deployment | `468c213e-5772-454b-84de-0f8a153de7bc` |
 | Actual server version | `17.11 (Debian 17.11-1.pgdg13+2)`, verified via SSH `psql SHOW server_version` |
-| Empty migration service | `20693ac2-43a4-450f-9715-ca87bbf326be` |
-| Empty web service | `e1d67655-9625-45c8-86ae-a970cb4c11b0` |
+| Migration service | `20693ac2-43a4-450f-9715-ca87bbf326be` |
+| Web service | `e1d67655-9625-45c8-86ae-a970cb4c11b0` |
+| Deployed Git archive | `cac4c0512de8b70480bd985e9f1740b91ea0f0e5` (merged TLS release, migrations 1–5) |
+| Initial migrations | `28231c24-68e8-4c5d-91d6-3df921a2d42b`, successful one-shot |
+| Synthetic administrator bootstrap | `46524367-0a32-4f16-bcc4-635c974e5903`, log confirms creation |
+| Final migration command/replay | `37796519-168d-4107-b88a-a8cf170c89ab`, successful one-shot, stopped |
+| Web deployment | `d7ff93d1-0186-4984-9939-54753ac4746f`, successful and running |
+| HTTPS staging URL | [web-staging-1ff1.up.railway.app](https://web-staging-1ff1.up.railway.app) |
 
 Generated database credentials were written directly to Railway through stdin;
 they are not stored in this repository. The runtime secret is independent of the
 administrator password; an in-memory check verified the web URL resolves to
 `aqlan_runtime` and only the migration URL resolves to `postgres`. No public database endpoint was created.
-The actual runtime database login, schema migrations, bootstrap account and application's external
-HTTPS path still require the operator sequence below after the final CI gate.
+The restricted `aqlan_runtime` login was provisioned after migration 005. The
+synthetic operator username is `staging.owner`; its generated password exists only
+in the migration service's `STAGING_ADMIN_PASSWORD` secret. The bootstrap fed that
+secret through stdin and the migration service's normal start command was restored.
+Neither application image nor repository contains these passwords. GitHub
+autodeploy remains disconnected; uploads use the reviewed exact Git archive.
 
 Database SSL is enabled. The server certificate includes
 `postgresql17.railway.internal` in its Subject Alternative Names; its public root
 CA was copied into both services' `DATABASE_CA_CERT` without exporting any private
 key. Root CA SHA-256: `3f573e60152a160db511c3aa4b716ff00029c7a97f57be2e2b2ba0c286e68a2d`.
-Actual driver certificate verification remains a deployment check.
+Live libpq verification with that CA and `verify-full` succeeded using TLS 1.3;
+wrong-hostname and untrusted-root attempts were rejected. Actual runtime login
+checks confirmed command/session privileges while rejecting command-owner role
+assumption, schema DDL and direct clinical DML. The running Node application's
+managed CA connection also passes its readiness probe.
+
+HTTPS requests using normal client certificate verification returned 200 for `/`,
+`/health/live` and `/health/ready`, and 401 for anonymous `/api/me`. These checks
+prove bounded foundation availability, not completed clinic workflows or clinical
+production approval. Live visual/authenticated journeys and staging restoration
+need their own evidence; the local restore proof below is not a Railway restore.
+
+Operational detail: redeploying an existing Railway deployment preserves that
+deployment's start command. To apply a changed operator command, upload the same
+verified archive again. Deployment `303eb432-9c4c-4308-9109-822fd5d9769c` consequently
+proved migration replay, not bootstrap; only the bootstrap ID above counts as
+account-creation evidence.
 
 Local canonical-LF rehearsal on exact Git archive
 `cea050d16ffa88e5c8df265f3f8fb05a2e1c446b` passed against a fresh PostgreSQL 17.11
