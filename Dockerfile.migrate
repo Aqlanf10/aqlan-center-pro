@@ -1,0 +1,22 @@
+# Separate, one-shot operator image. Never deploy as the HTTP service.
+FROM node:24-bookworm-slim
+ENV NODE_ENV=production PYTHONUNBUFFERED=1
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 curl ca-certificates \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl --fail --show-error --silent --location \
+       https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+       --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main' > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client-17 \
+    && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --chown=node:node db ./db
+COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node server/bootstrap.mjs server/database.mjs server/password.mjs ./server/
+COPY --chown=node:node LICENSE ./LICENSE
+USER node
+CMD ["python3", "scripts/migrate.py"]

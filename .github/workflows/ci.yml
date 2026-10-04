@@ -1,0 +1,91 @@
+name: Integrated foundation checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  node:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      browser-postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: aqlan_browser_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aqlan_browser_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Install browser rehearsal dependency
+        run: npx playwright install --with-deps chromium
+      - name: Arabic and English browser rehearsal
+        env:
+          BROWSER_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/aqlan_browser_test
+          TZ: Asia/Aden
+        run: npm run test:browser
+      - name: Production image build
+        run: docker build --tag aqlan-center-pro:ci .
+      - name: Migration operator image build
+        run: docker build --file Dockerfile.migrate --tag aqlan-center-pro-migrate:ci .
+      - name: Production dependency security gate
+        run: npm audit --omit=dev --audit-level=high
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: aqlan_ci_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aqlan_ci_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/aqlan_ci_test
+      TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/aqlan_ci_test
+      RESTORE_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/aqlan_ci_restore_test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Select matching PostgreSQL 17 clients
+        run: |
+          if [ ! -x /usr/lib/postgresql/17/bin/pg_dump ]; then
+            # Ubuntu 24.04 does not include client 17 in its base repositories.
+            # Use the upstream repository with a key scoped to this source.
+            sudo install -d /usr/share/postgresql-common/pgdg
+            sudo curl --fail --show-error --silent --location https://www.postgresql.org/media/keys/ACCC4CF8.asc --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+            echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client-17
+          fi
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      - name: Verify matching PostgreSQL clients
+        run: |
+          psql --version | grep -E 'PostgreSQL\) 17\.'
+          pg_dump --version | grep -E 'PostgreSQL\) 17\.'
+          pg_restore --version | grep -E 'PostgreSQL\) 17\.'
+      - name: Apply migrations atomically
+        run: python3 scripts/migrate.py
+      - name: Verify migration re-run is safe
+        run: python3 scripts/migrate.py
+      - name: Verify real PostgreSQL concurrency and idempotency
+        run: python3 scripts/test-postgres.py
+      - name: Rehearse isolated backup and restore
+        run: python3 scripts/restore-test.py

@@ -1,0 +1,8 @@
+# Select this config only on the isolated migration service.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.migrate"
+
+[deploy]
+startCommand = "python3 scripts/migrate.py"
+restartPolicyType = "NEVER"
