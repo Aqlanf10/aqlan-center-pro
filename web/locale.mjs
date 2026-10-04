@@ -41,6 +41,35 @@ Object.assign(messages,{
 });
 Object.assign(messages,{'جارٍ إعادة قراءة بيانات المريض…':'Reloading patient data…','تعذر إعادة قراءة بيانات المريض':'Patient data could not be reloaded','المعلومات السابقة محجوبة حتى نجاح إعادة القراءة. إعادة القراءة لا تعيد تنفيذ الحفظ.':'Previous information is hidden until reloading succeeds. Reloading does not repeat the save.','إعادة قراءة الملف':'Reload patient record'});
 messages['تسجيل هذه المراجعة لا يُعد موافقة طبية أو توقيعًا عليها.']='Recording this review does not constitute medical consent or a signature.';
+Object.assign(messages,{
+ 'حسابي وجلساتي':'My account and sessions',
+ 'إدارة جلسات حسابك وكلمة مرورك في جميع الفروع.':'Manage your account sessions and password across all branches.',
+ 'الجلسات النشطة':'Active sessions',
+ 'إعادة قراءة الجلسات':'Reload sessions',
+ 'وقت إنشاء الجلسة وانتهائها يساعدانك على مراجعة الدخول إلى حسابك.':'Review when each session started and expires to check access to your account.',
+ 'هذه الجلسة':'This session','جلسة أخرى':'Another session','بدأت في':'Started at','تنتهي في':'Expires at',
+ 'إنهاء الجلسة':'End session','إنهاء الجلسات الأخرى':'End other sessions','تغيير كلمة المرور':'Change password',
+ 'سيؤدي تغيير كلمة المرور إلى إنهاء جميع جلسات حسابك، بما فيها هذه الجلسة. ستحتاج إلى تسجيل الدخول بالكلمة الجديدة.':'Changing your password ends all your sessions, including this one. You will need to sign in with the new password.',
+ 'كلمة المرور الجديدة بين 12 و256 حرفًا وتختلف عن الحالية.':'Use 12 to 256 characters for the new password, different from your current password.',
+ 'كلمة المرور الحالية':'Current password','كلمة المرور الجديدة':'New password','تأكيد كلمة المرور الجديدة':'Confirm new password',
+ 'أفهم أن تغيير كلمة المرور سينهي جميع جلساتي.':'I understand that changing my password will end all my sessions.',
+ 'تغيير كلمة المرور وإنهاء الجلسات':'Change password and end sessions',
+ 'جارٍ قراءة الجلسات…':'Loading sessions…',
+ 'ستنتهي جميع جلساتك الأخرى؛ ستبقى هذه الجلسة مفتوحة.':'All your other sessions will end. This session will stay open.',
+ 'ستنتهي هذه الجلسة وستعود إلى تسجيل الدخول.':'This session will end and you will return to sign in.',
+ 'ستنتهي الجلسة المختارة؛ ستبقى هذه الجلسة مفتوحة.':'The selected session will end. This session will stay open.',
+ 'أؤكد إنهاء الجلسات المحددة.':'I confirm ending the selected sessions.',
+ 'تأكيد الإنهاء':'Confirm ending sessions','تم إنهاء الجلسات المحددة.':'The selected sessions have ended.',
+ 'كلمة المرور الحالية غير صحيحة.':'The current password is incorrect.',
+ 'راجع متطلبات كلمة المرور الجديدة.':'Check the new password requirements.',
+ 'اختر كلمة مرور جديدة تختلف عن الحالية.':'Choose a new password different from the current one.',
+ 'تأكيد كلمة المرور لا يطابق الكلمة الجديدة.':'Password confirmation does not match the new password.',
+ 'تغيرت بيانات الدخول. أعد قراءة الجلسات قبل تغيير كلمة المرور.':'Sign-in credentials have changed. Reload sessions before changing the password.',
+ 'تعذر حسم نتيجة تغيير كلمة المرور. سجّل الدخول بالكلمة الجديدة؛ إذا رُفضت، جرّب السابقة. لا تعِد إرسال طلب التغيير دون تسجيل الدخول والتحقق.':'The password change outcome is unknown. Sign in with the new password; if it is rejected, try the previous password. Do not send another change request before signing in and checking.',
+ 'تغيرت كلمة المرور وأُنهِيت جميع الجلسات. سجّل الدخول بالكلمة الجديدة.':'Your password changed and all sessions ended. Sign in with the new password.',
+ 'أُنهِيت هذه الجلسة. سجّل الدخول للمتابعة.':'This session ended. Sign in to continue.',
+ 'تعذر حسم نتيجة إنهاء الجلسة. أعد قراءة الجلسات للتحقق قبل المحاولة مجددًا.':'The session-ending outcome is unknown. Reload sessions to check before trying again.'
+});
 let locale='ar';try{locale=localStorage.getItem('aqlan.locale')==='en'?'en':'ar';}catch{}
 export const getLocale=()=>locale;
 export function setLocale(value){locale=value==='en'?'en':'ar';try{localStorage.setItem('aqlan.locale',locale);}catch{}document.documentElement.lang=locale;document.documentElement.dir=locale==='ar'?'rtl':'ltr';}

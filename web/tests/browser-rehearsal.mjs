@@ -13,6 +13,7 @@ import {PGlite} from '@electric-sql/pglite';
 import {fixture} from '../../tests/helpers/database.mjs';
 import {createApp} from '../../server/app.mjs';
 import {hashPassword} from '../../server/password.mjs';
+import {accountSecurityJourney} from './account-security-journey.mjs';
 import {patientHistoryJourney} from './patient-history-journey.mjs';
 
 async function testDatabase(){
@@ -132,6 +133,7 @@ try {
  await action('new-visit').click();
  assert.equal(await page.locator('[name="planId"] option').last().innerText(),'تقويم الأسنان','Clinical users do not receive agreement currency');
  await action('close-modal').click();
+ await accountSecurityJourney({page,browser,password,db,fixture:f,screenshot});
  assert.deepEqual(errors,[]);
  console.log(`PASS: real Chromium + HTTP + synthetic ${process.env.BROWSER_DATABASE_URL?'PostgreSQL':'PGlite'}: Arabic/English login, new plan, FDI step, signed visit without added debt, YER/SAR payment, legacy unknown rejection/review/activation, protected clinical text, mobile RTL/LTR. This is not Railway or production approval; restricted deployment credentials and concurrent operations have separate gates.`);
 } finally {
