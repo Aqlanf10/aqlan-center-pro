@@ -51,6 +51,27 @@ All required permissions, including payload-dependent financial permissions,
 are rechecked before returning a saved result. Previous migration files remain
 immutable; apply the numbered upgrade before deploying this client.
 
+## Reviewed patient history (PAT-03 partial)
+
+Migration 006 is required before serving this release; readiness rejects an older
+schema. `GET /api/branches/:branch/patients/:patient/history` requires patient.read
+and clinical.read. It returns `{patientId,branchId,scope:'branch',version,current,revisions}`;
+an unreviewed branch has version 0, current null and an empty revision list. This
+does not establish absence of allergies in this or any other branch.
+
+`POST` to the same route additionally requires clinical.write and accepts
+`{key,payload:{expectedVersion,medical,dental,allergies,source,reason,observedOn}}`.
+Each section contains `{status,details}`: status is unknown, none or reported;
+reported requires 3–6000 characters, while the other states require empty details.
+Source is patient_report, guardian_report, record_review or clinician_review;
+reason is 3–2000 characters and observedOn is a valid nonfuture branch-local date.
+The authenticated actor and their display-name snapshot are assigned by the server.
+Reviews append immutable versions. The result is `{id,version,command}`;
+STALE_HISTORY_VERSION requires rereading and reviewing the newer information.
+Use the exact same key and payload after an uncertain response. Permissions and
+patient membership are rechecked before returning any previously committed result.
+No charge, diagnosis or consent is created by recording this review.
+
 ## Operator bootstrap
 
 After migrations, invoke `node server/bootstrap.mjs` against the admin connection with `ADMIN_USERNAME`, `ADMIN_DISPLAY_NAME`, and `BRANCH_NAME`; supply a 12–256-character password through a secure stdin pipe. No password argument or log. The CLI refuses to proceed if any login account exists. Bootstrap does not run on server startup. There is no public bootstrap endpoint or default credential.
