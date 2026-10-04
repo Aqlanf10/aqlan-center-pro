@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+.env
+.env.*
+!.env.example
+*.log
+tests
+coverage
+docs
+*.zip
+*.mp4
