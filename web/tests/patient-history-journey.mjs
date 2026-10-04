@@ -62,7 +62,7 @@ export async function patientHistoryJourney({page,db,fixture:f,screenshot}){
  let releaseResponse,captureResponse;
  const released=new Promise(resolve=>{releaseResponse=resolve;}),captured=new Promise(resolve=>{captureResponse=resolve;});
  let delayRefresh=true;
- await page.route(`**/patients/${patientId}/history`,async route=>{if(delayRefresh&&route.request().method()==='GET'){delayRefresh=false;const response=await route.fetch();captureResponse();await released;await route.fulfill({response});}else await route.continue();});
+ await page.route(`**/patients/${patientId}/history`,async route=>{if(delayRefresh&&route.request().method()==='GET'){delayRefresh=false;const response=await route.fetch();captureResponse();await released;await route.abort('failed');}else await route.continue();});
  try{
   await action('review-history').click();await page.locator('[name="source"]').selectOption('clinician_review');await fill('reason','مراجعة لاختبار تأخر استجابة حقيقية');
   await page.locator('#command-form [type="submit"]').click();await captured;
@@ -74,6 +74,29 @@ export async function patientHistoryJourney({page,db,fixture:f,screenshot}){
   assert.equal(await page.locator('.history-current').count(),0);
  }finally{releaseResponse();await page.unroute(`**/patients/${patientId}/history`);}
  await reopen();
+ // A committed review followed by failed reads must hide the old record, then retry only GET.
+ let reviewPosts=0,abortRead=true;
+ await page.route(`**/patients/${patientId}/history`,async route=>{if(route.request().method()==='POST'){reviewPosts++;await route.continue();}else if(abortRead){abortRead=false;await route.abort('failed');}else await route.continue();});
+ const beforeRefreshFailure=(await db.query('SELECT count(*)::int AS n FROM clinic.patient_history_revision WHERE patient_id=$1 AND branch_id=$2',[patientId,f.branch])).rows[0].n;
+ await action('review-history').click();await page.locator('[name="source"]').selectOption('clinician_review');await fill('reason','حفظ مؤكد ثم فشل القراءة');await fill('allergiesDetails','حساسية جديدة بعد فشل القراءة');await submit();
+ await page.locator('.patient-read-state[role="alert"]').waitFor();assert.equal(await page.locator('.history-alert,.history-current').count(),0);
+ await action('retry-patient-read').click();await page.locator('.history-alert').waitFor();assert.equal(await page.locator('.history-alert p').innerText(),'حساسية جديدة بعد فشل القراءة');assert.equal(reviewPosts,1);
+ await page.unroute(`**/patients/${patientId}/history`);
+ assert.equal((await request(f.branch)).body.revisions.length,beforeRefreshFailure+1,'Reload must not append another revision');
+ // A first attempt that never reached the server can be definitively rejected as stale.
+ await action('review-history').click();await page.locator('[name="source"]').selectOption('clinician_review');await fill('reason','طلب لم يصل إلى الخادم');
+ let abortPost=true,originalKey;
+ await page.route(`**/patients/${patientId}/history`,async route=>{if(abortPost&&route.request().method()==='POST'){abortPost=false;originalKey=route.request().postDataJSON().key;await route.abort('failed');}else await route.continue();});
+ await page.locator('#command-form [type="submit"]').click();await page.waitForFunction(()=>document.querySelector('#modal').dataset.uncertain==='true');
+ const latest=(await request(f.branch)).body;
+ assert.equal((await request(f.branch,{key:randomUUID(),payload:{...concurrent,expectedVersion:latest.version,reason:'مراجعة متزامنة أثناء انقطاع الطلب',allergies:{status:'reported',details:'مراجعة متزامنة نهائية'}}})).status,200);
+ await page.locator('#command-form [type="submit"]').click();await page.waitForFunction(()=>!document.querySelector('#modal').dataset.busy&&!document.querySelector('#modal').dataset.uncertain);
+ assert.match(await page.locator('#form-error').innerText(),/مراجعة أحدث/);assert.equal(await page.locator('[name="reason"]').isDisabled(),false);
+ await action('close-modal').click();assert.equal(await page.locator('#modal').evaluate(el=>el.open),false);
+ await action('retry-patient-read').click();await page.locator('.history-alert').waitFor();assert.equal(await page.locator('.history-alert p').innerText(),'مراجعة متزامنة نهائية');
+ assert.equal((await request(f.branch)).body.version,latest.version+1);
+ assert.equal((await db.query('SELECT count(*)::int AS n FROM clinic.operation WHERE branch_id=$1 AND key=$2',[f.branch,originalKey])).rows[0].n,0);
+ await page.unroute(`**/patients/${patientId}/history`);
  await page.setViewportSize({width:1366,height:900});
  console.log('PASS: branch-scoped history browser save/reopen, reported/none/unknown distinction, immutable prior revision, escaped clinical details, stale revision rejection, lost-response replay, branch isolation and read-only role, Arabic/English mobile layouts.');
 }

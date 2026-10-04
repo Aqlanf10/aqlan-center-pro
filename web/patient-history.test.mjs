@@ -28,3 +28,12 @@ test('history UI preserves immutable attribution and hides review action for rea
  assert.equal((form.match(/value="unknown" selected/g)||[]).length,3);
  assert.match(form,/<option value="">اختر مصدر المراجعة/);
 });
+
+test('saved review timestamp uses the selected locale and branch timezone without raw ISO text',()=>{
+ const history={version:1,current,revisions:[current]};
+ const aden=historyContent(history,false,null,'en','Asia/Aden');
+ const utc=historyContent(history,false,null,'en','UTC');
+ assert.match(aden,/1:00 PM/);assert.match(utc,/10:00 AM/);
+ assert.doesNotMatch(aden,/2026-01-02T10:00:00Z/);
+ assert.equal(current.reviewed_at,'2026-01-02T10:00:00Z');
+});
