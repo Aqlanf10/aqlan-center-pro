@@ -23,11 +23,12 @@ The existing projects listed above were not modified.
 | Actual server version | `17.11 (Debian 17.11-1.pgdg13+2)`, verified via SSH `psql SHOW server_version` |
 | Migration service | `20693ac2-43a4-450f-9715-ca87bbf326be` |
 | Web service | `e1d67655-9625-45c8-86ae-a970cb4c11b0` |
-| Deployed Git archive | `cac4c0512de8b70480bd985e9f1740b91ea0f0e5` (merged TLS release, migrations 1–5) |
+| Deployed Git archive | `519cf5ffdbfb1addd7df858cb1df74d02243de89` (merged patient-history release, migrations 1–6) |
 | Initial migrations | `28231c24-68e8-4c5d-91d6-3df921a2d42b`, successful one-shot |
 | Synthetic administrator bootstrap | `46524367-0a32-4f16-bcc4-635c974e5903`, log confirms creation |
-| Final migration command/replay | `37796519-168d-4107-b88a-a8cf170c89ab`, successful one-shot, stopped |
-| Web deployment | `d7ff93d1-0186-4984-9939-54753ac4746f`, successful and running |
+| Prior TLS release migration replay | `37796519-168d-4107-b88a-a8cf170c89ab`, successful one-shot, stopped |
+| Migration 006 upgrade | `dda663fc-024f-4716-ae33-7f63ee7a7bd2`, successful one-shot, stopped |
+| Web deployment | `d3ea0014-a434-4467-aa6d-01afe3c17a2b`, successful and running |
 | HTTPS staging URL | [web-staging-1ff1.up.railway.app](https://web-staging-1ff1.up.railway.app) |
 
 Generated database credentials were written directly to Railway through stdin;
@@ -54,8 +55,29 @@ managed CA connection also passes its readiness probe.
 HTTPS requests using normal client certificate verification returned 200 for `/`,
 `/health/live` and `/health/ready`, and 401 for anonymous `/api/me`. These checks
 prove bounded foundation availability, not completed clinic workflows or clinical
-production approval. Live visual/authenticated journeys and staging restoration
-need their own evidence; the local restore proof below is not a Railway restore.
+production approval. On the preceding TLS release `cac4c051`, authenticated Chrome
+checks passed Arabic/English desktop/mobile login, one clearly synthetic patient
+creation and reload persistence, logout/401, and no console errors or horizontal
+overflow. This bounded check did not exercise financial workflows.
+
+Before upgrading to migration 006, a read-only native dump of the stable staging
+database was restored into `aqlan_stage_cac4c051_test`. The exact `cac4c051` operator
+image then ran `scripts/restore-test.py` into the separate
+`aqlan_stage_cac4c051_restore_test` database. Deployment
+`9fde84d0-e792-43fa-81bb-accb47903511` passed backup checksum, restore, row counts,
+schema versions, per-currency ledger and next sequence checks. Independent sorted
+row SHA-256 fingerprints and counts matched across all 22 clinic/public tables in
+the original, disposable source and restored database. Original staging remained
+unchanged; temporary dump files were removed. The two disposable databases remain
+available for inspection. This verifies database restoration, not attachment or
+offsite backup recovery; no separate restored application was started.
+
+After restore success, merged PR #5 archive `519cf5ff` was uploaded to the operator
+and then web. Its reviewed head `30f9ba7` passed CI run `37245064431`. Live schema
+versions are exactly 1–6 and the original synthetic patient remains. Actual runtime
+login permission boundaries and wrong-hostname/untrusted-CA rejection passed again
+after the upgrade. No migration 007 was included. The migration operator's normal
+start command is again `python3 scripts/migrate.py`.
 
 Operational detail: redeploying an existing Railway deployment preserves that
 deployment's start command. To apply a changed operator command, upload the same

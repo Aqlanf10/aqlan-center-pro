@@ -3,12 +3,18 @@
   "projectId": "a0d375a9-fbaa-4342-8cd7-766477c4753c",
   "environmentId": "e058251a-0b65-475a-a3eb-301c9d0f7ab8",
   "environmentName": "staging",
-  "deployedGitSha": "cac4c0512de8b70480bd985e9f1740b91ea0f0e5",
+  "deployedGitSha": "519cf5ffdbfb1addd7df858cb1df74d02243de89",
   "services": {
     "migrate": {
       "serviceId": "20693ac2-43a4-450f-9715-ca87bbf326be",
-      "build": { "builder": "DOCKERFILE", "dockerfilePath": "Dockerfile.migrate" },
-      "deploy": { "startCommand": "python3 scripts/migrate.py", "restartPolicyType": "NEVER" },
+      "build": {
+        "builder": "DOCKERFILE",
+        "dockerfilePath": "Dockerfile.migrate"
+      },
+      "deploy": {
+        "startCommand": "python3 scripts/migrate.py",
+        "restartPolicyType": "NEVER"
+      },
       "variables": {
         "NODE_ENV": "production",
         "DATABASE_URL": "${{PostgreSQL17.DATABASE_URL}}",
@@ -17,16 +23,24 @@
         "ADMIN_DISPLAY_NAME": "مدير البيئة التجريبية",
         "BRANCH_NAME": "الفرع التجريبي"
       },
-      "managedSecrets": ["RUNTIME_PASSWORD", "STAGING_ADMIN_PASSWORD"],
-      "managedPublicTrust": ["DATABASE_CA_CERT"],
+      "managedSecrets": [
+        "RUNTIME_PASSWORD",
+        "STAGING_ADMIN_PASSWORD"
+      ],
+      "managedPublicTrust": [
+        "DATABASE_CA_CERT"
+      ],
       "publicDomain": false,
       "sourceConnected": false,
-      "lastDeploymentId": "37796519-168d-4107-b88a-a8cf170c89ab",
+      "lastDeploymentId": "dda663fc-024f-4716-ae33-7f63ee7a7bd2",
       "lastDeploymentStatus": "SUCCESS (one-shot stopped)"
     },
     "web": {
       "serviceId": "e1d67655-9625-45c8-86ae-a970cb4c11b0",
-      "build": { "builder": "DOCKERFILE", "dockerfilePath": "Dockerfile" },
+      "build": {
+        "builder": "DOCKERFILE",
+        "dockerfilePath": "Dockerfile"
+      },
       "deploy": {
         "healthcheckPath": "/health/ready",
         "healthcheckTimeout": 60,
@@ -39,12 +53,14 @@
         "PORT": "3000",
         "DATABASE_URL": "postgresql://aqlan_runtime:${{migrate.RUNTIME_PASSWORD}}@${{PostgreSQL17.RAILWAY_PRIVATE_DOMAIN}}:5432/${{PostgreSQL17.PGDATABASE}}"
       },
-      "managedPublicTrust": ["DATABASE_CA_CERT"],
+      "managedPublicTrust": [
+        "DATABASE_CA_CERT"
+      ],
       "pendingVariables": [],
       "publicDomain": true,
       "url": "https://web-staging-1ff1.up.railway.app",
       "sourceConnected": false,
-      "lastDeploymentId": "d7ff93d1-0186-4984-9939-54753ac4746f",
+      "lastDeploymentId": "d3ea0014-a434-4467-aa6d-01afe3c17a2b",
       "lastDeploymentStatus": "SUCCESS (running)"
     }
   },
@@ -54,5 +70,14 @@
     "Provision the actual restricted runtime database role only after migrations.",
     "Set APP_ORIGIN to the actual HTTPS domain before web deployment.",
     "Verify DATABASE_CA_CERT with rejectUnauthorized true; do not add conflicting URL SSL overrides."
-  ]
+  ],
+  "restoreEvidence": {
+    "gitSha": "cac4c0512de8b70480bd985e9f1740b91ea0f0e5",
+    "deploymentId": "9fde84d0-e792-43fa-81bb-accb47903511",
+    "status": "PASS",
+    "sourceDatabase": "aqlan_stage_cac4c051_test",
+    "restoredDatabase": "aqlan_stage_cac4c051_restore_test",
+    "matchingTableFingerprints": 22,
+    "liveSourceUnchanged": true
+  }
 }
