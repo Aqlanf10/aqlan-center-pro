@@ -2,6 +2,7 @@
 """Real PostgreSQL multi-connection tests. Only disposable *_test databases allowed."""
 import json
 import os
+import secrets
 from pathlib import Path
 import subprocess
 import sys
@@ -48,7 +49,7 @@ def plan():
 
 
 def race(first_sql, second_sql):
-    # First holds its transaction/plan lock while the second connection executes.
+    # First holds its transaction/row lock while the second connection executes.
     first = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     first.stdin.write('BEGIN;\n' + first_sql + '\n\\echo LOCK_HELD\nSELECT pg_sleep(2);\nCOMMIT;\n')
     first.stdin.close()
@@ -163,3 +164,71 @@ corrected_history = dict(history_review, expectedVersion=1, reason='Synthetic fo
 sql(history_command(patient, corrected_history))
 assert sql(f"SELECT string_agg(medical->>'status',',' ORDER BY version) FROM clinic.patient_history_revision WHERE patient_id='{patient}' AND branch_id='{branch}';") == 'unknown,none'
 print('PASS: dated history correction preserves the original unknown state and reported allergy')
+
+# SEC-01 self-service races use separate real connections and the restricted role.
+# Format-valid synthetic digests are never printed; HTTP scrypt verification is
+# covered separately. These test the verified-hash/version CAS database boundary.
+def security_fixture():
+    staff = str(uuid4())
+    stored = 'scrypt-v1$' + secrets.token_hex(16) + '$' + secrets.token_hex(64)
+    replacement = 'scrypt-v1$' + secrets.token_hex(16) + '$' + secrets.token_hex(64)
+    current = secrets.token_hex(32)
+    sql(f"INSERT INTO clinic.staff(id,display_name) VALUES('{staff}','Synthetic security race');"
+        f"INSERT INTO clinic.login_account(staff_id,username,password_hash) VALUES('{staff}','{staff}',{literal(stored)});")
+    sql(f"SET ROLE clinic_runtime; SELECT clinic.issue_session('{staff}',1,'{current}');")
+    change = (f"SET ROLE clinic_runtime; SELECT clinic.change_account_password('{staff}','{current}',1,"
+              f"{literal(stored)},{literal(replacement)});")
+    return staff, current, change
+
+
+def security_state(staff):
+    # Return only counters/epoch; do not fetch password or token material.
+    return json.loads(sql(f"""SELECT json_build_object(
+      'version',(SELECT credential_version FROM clinic.login_account WHERE staff_id='{staff}'),
+      'sessions',(SELECT count(*) FROM clinic.session WHERE staff_id='{staff}'),
+      'changes',(SELECT count(*) FROM clinic.auth_audit WHERE actor_id='{staff}' AND action='password.changed'));
+      """))
+
+
+staff, current, change = security_fixture()
+late_login = f"SET ROLE clinic_runtime; SELECT clinic.issue_session('{staff}',1,'{secrets.token_hex(32)}');"
+code, _, error = race(change, late_login)
+assert code != 0 and 'STALE_CREDENTIAL_VERSION' in error, 'Pre-change verified login must reject its stale credential epoch'
+assert security_state(staff) == {'version': 2, 'sessions': 0, 'changes': 1}
+print('PASS: password change locks out a concurrently issued session verified with the previous credential version')
+
+staff, current, change = security_fixture()
+early_login = f"SET ROLE clinic_runtime; SELECT clinic.issue_session('{staff}',1,'{secrets.token_hex(32)}');"
+code, output, _ = race(early_login, change)
+assert code == 0, 'Password change must wait for earlier session issuance without deadlock'
+assert json.loads(output) == {'credentialVersion': 2, 'signedOut': True}
+assert security_state(staff) == {'version': 2, 'sessions': 0, 'changes': 1}
+assert sql(f"SELECT affected_sessions FROM clinic.auth_audit WHERE actor_id='{staff}' AND action='password.changed';") == '2'
+print('PASS: password change revokes sessions issued immediately before it acquires the account lock')
+
+staff, current, change = security_fixture()
+code, _, error = race(change, change)
+assert code != 0 and 'AUTH_REQUIRED' in error, 'Second password change must reject its revoked current session'
+assert security_state(staff) == {'version': 2, 'sessions': 0, 'changes': 1}
+print('PASS: simultaneous password changes advance once and record exactly one immutable audit event')
+
+staff, current, _ = security_fixture()
+sql(f"SET ROLE clinic_runtime; SELECT clinic.issue_session('{staff}',1,'{secrets.token_hex(32)}');")
+revoke = f"SET ROLE clinic_runtime; SELECT clinic.revoke_other_sessions('{staff}','{current}');"
+late_issue = f"SET ROLE clinic_runtime; SELECT clinic.issue_session('{staff}',1,'{secrets.token_hex(32)}');"
+code, output, _ = race(revoke, late_issue)
+assert code == 0, 'Issuance after revoke-others must serialize successfully'
+assert json.loads(output)['credentialVersion'] == 1
+assert security_state(staff) == {'version': 1, 'sessions': 2, 'changes': 0}
+assert sql(f"SELECT affected_sessions FROM clinic.auth_audit WHERE actor_id='{staff}' AND action='sessions.others_revoked';") == '1'
+print('PASS: revoke-others preserves current epoch; a later legitimate login can create a new session')
+
+staff, current, _ = security_fixture()
+early_issue = f"SET ROLE clinic_runtime; SELECT clinic.issue_session('{staff}',1,'{secrets.token_hex(32)}');"
+revoke = f"SET ROLE clinic_runtime; SELECT clinic.revoke_other_sessions('{staff}','{current}');"
+code, output, _ = race(early_issue, revoke)
+assert code == 0, 'Revoke-others must wait for earlier issuance without deadlock'
+assert json.loads(output) == {'revokedCount': 1}
+assert security_state(staff) == {'version': 1, 'sessions': 1, 'changes': 0}
+assert sql(f"SELECT count(*) FROM clinic.session WHERE staff_id='{staff}' AND token_hash='{current}';") == '1'
+print('PASS: revoke-others removes a concurrent earlier login while retaining the current session')
