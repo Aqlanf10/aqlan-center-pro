@@ -22,6 +22,39 @@ written to the repository. See the [driver SSL contract](https://node-postgres.c
 
 ## Read contract
 
+### Self-service account security (schema 007)
+
+`GET /api/account/sessions` returns the authenticated account's
+`{credentialVersion,sessions:[{id,createdAt,expiresAt,current}]}`. IDs are public
+random UUIDs, never session token hashes. It requires no branch role and gives
+no authority over another account. `POST /api/account/sessions/:id/revoke` with
+`{}` revokes only an owned session; another account's ID returns the same 404 as
+an absent ID. `POST /api/account/sessions/revoke-others` with `{}` retains the
+current session and reports `revokedCount`. Revoking the current session clears
+the cookie. Repeated no-op revocation of other sessions adds no success audit.
+
+`POST /api/account/password` accepts exactly
+`{currentPassword,newPassword,expectedCredentialVersion}`. The version comes from
+the sessions read. Passwords are 12–256 characters; current-password verification
+and salted scrypt hashing occur on the trusted server. Five attempts per account
+per 15 minutes are allowed by the instance-local limiter; shared throttling is a
+remaining production/scaling requirement. Incorrect current password returns
+CURRENT_PASSWORD_INCORRECT without changing credentials. A successful change
+atomically increments the credential version, revokes all sessions and requires
+a new login. No new session is issued automatically.
+
+Login creates sessions through a locked version check, so a password change that
+wins a race cannot be followed by a valid login based on the previous credential
+snapshot. Account operations recheck active identity/current session under that
+same lock. Audit records contain fixed action/actor/session-ID/count/time fields,
+never passwords, password hashes or cookie hashes. Transport failure after a
+password POST has an uncertain outcome: sign in with the new password, or the old
+one if the new one is rejected; do not automatically repeat the write. Password
+recovery, MFA, staff provisioning and global role administration are not supplied
+by this partial self-service delivery.
+
+### Branch and patient reads
+
 - `GET /api/branches` → `{branches:[{id,name,timezone,permissions:[]}]}`.
 - `GET /api/specialties` → `{specialties:[{code,name_ar}]}`.
 - `GET /api/branches/:branch/patients?q=...` → `{patients:[]}`; max 100.
