@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 
 test('runtime role can execute authorized commands but cannot bypass command boundary',async()=>{
  const db=new PGlite();
  try {
-  for(const file of ['001_core.sql','002_commands.sql','003_auth.sql','004_runtime_boundary.sql']) await db.exec(await readFile(new URL(`../db/${file}`,import.meta.url),'utf8'));
+  for(const file of (await readdir(new URL('../db/',import.meta.url))).filter(f=>/^\d+.*\.sql$/.test(f)).sort()) await db.exec(await readFile(new URL(`../db/${file}`,import.meta.url),'utf8'));
   const staff=(await db.query("INSERT INTO clinic.staff(display_name) VALUES('Owner') RETURNING id")).rows[0].id;
   const branch=(await db.query("INSERT INTO clinic.branch(name) VALUES('Main') RETURNING id")).rows[0].id;
   const role=(await db.query("INSERT INTO clinic.role(name) VALUES('Test') RETURNING id")).rows[0].id;
@@ -22,7 +22,7 @@ test('runtime role can execute authorized commands but cannot bypass command bou
   assert.ok(patient.id);
   const command=async(name,payload)=>(await db.query('SELECT clinic.execute($1,$2,$3,$4,$5::jsonb) AS result',[staff,branch,randomUUID(),name,JSON.stringify(payload)])).rows[0].result;
   const plan=await command('plan.create',{patientId:patient.id,title:'Orthodontic treatment',specialty:'orthodontics',origin:'new',currency:'SAR',agreed:'1000.00'});
-  await command('plan.activate',{planId:plan.id});
+  await command('plan.activate',{planId:plan.id,expectedVersion:1});
   const step=await command('step.create',{planId:plan.id,procedureName:'Adjustment',tooth:'11'});
   const visit=await command('visit.create',{planId:plan.id,stepId:step.id,note:'Adjustment completed'});
   await command('visit.sign',{visitId:visit.id,completeStep:true});

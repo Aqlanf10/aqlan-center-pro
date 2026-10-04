@@ -35,7 +35,7 @@ test('database: unknown and disputed legacy values stay unknown and require revi
   const f = await fixture(db);
   for (const [index, change] of [{ agreed: null }, { previouslyPaid: null }, { disputed: true }].entries()) {
     const planId = await f.plan({ ...legacy, sourceRecordId: `review-${index}`, ...change });
-    await assert.rejects(f.command('legacy.activate', { planId }), /LEGACY_REVIEW_REQUIRED/);
+    await assert.rejects(f.command('legacy.activate', { planId, expectedVersion: 1 }), /LEGACY_REVIEW_REQUIRED/);
     assert.equal(await f.balance(planId), '0');
     const row = (await db.query('SELECT status,agreed,previously_paid FROM clinic.plan WHERE id=$1', [planId])).rows[0];
     assert.equal(row.status, 'draft');
@@ -190,7 +190,7 @@ test('database: fully paid legacy treatment continues with visits and no invente
   const visit = await f.command('visit.create', { planId, note: 'متابعة بعد تسديد الاتفاق سابقاً' });
   await f.command('visit.sign', { visitId: visit.id });
   assert.equal(await f.count('journal'), 0);
-  await assert.rejects(f.command('legacy.activate', { planId }), /PLAN_ALREADY_ACTIVATED/);
+  await assert.rejects(f.command('legacy.activate', { planId, expectedVersion: 2 }), /PLAN_ALREADY_ACTIVATED/);
 });
 
 test('database: closed plans reject new payments and visits', async () => {

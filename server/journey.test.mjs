@@ -21,7 +21,15 @@ test('authenticated runtime HTTP: integrated new and legacy patient journeys wit
   const password='generated-fixture-'+randomUUID(),passwordHash=await hashPassword(password);
   await db.query('INSERT INTO clinic.login_account(staff_id,username,password_hash) VALUES($1,$2,$3),($4,$5,$3)',[owner,'journey-owner',passwordHash,doctor,'journey-doctor']);
   await db.exec('CREATE ROLE journey_runtime LOGIN INHERIT; GRANT clinic_runtime TO journey_runtime; SET SESSION AUTHORIZATION journey_runtime');
-  const origin='http://localhost:3000'; server=createApp({db,origin});
+  let afterStatementRead;
+  const httpDatabase={query:async(sql,params)=>{
+   const result=await db.query(sql,params);
+   if(afterStatementRead && sql.includes('FROM clinic.journal j')) {
+    const hook=afterStatementRead; afterStatementRead=undefined; await hook();
+   }
+   return result;
+  }};
+  const origin='http://localhost:3000'; server=createApp({db:httpDatabase,origin});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${server.address().port}`;
   const request=async(path,{cookie,body,method=body?'POST':'GET'}={})=>{
@@ -31,12 +39,58 @@ test('authenticated runtime HTTP: integrated new and legacy patient journeys wit
   const login=await request('/api/login',{body:{username:'journey-owner',password}}); assert.equal(login.status,200); const cookie=login.cookie;
   const docLogin=await request('/api/login',{body:{username:'journey-doctor',password}}); assert.equal(docLogin.status,200); const doctorCookie=docLogin.cookie;
   const path=`/api/branches/${branch}`;
+  const approvalVersions=new Map();
   const command=async(name,payload,{key=randomUUID(),expected=200,session=cookie}={})=>{
+   // Fixture snapshots are cached per operation; retries must retain their original approval version.
+   if(['legacy.review','plan.activate','legacy.activate'].includes(name) && payload.expectedVersion===undefined) {
+    if(!approvalVersions.has(key)) approvalVersions.set(key,(await db.query('SELECT version FROM clinic.plan WHERE id=$1',[payload.planId])).rows[0]?.version);
+    payload={...payload,expectedVersion:approvalVersions.get(key)};
+   }
    const result=await request(`${path}/commands`,{cookie:session,body:{key,command:name,payload}});
    assert.equal(result.status,expected,`${name}: ${JSON.stringify(result.data)}`); return result.data;
   };
   const get=async(url,session=cookie,expected=200)=>{ const result=await request(url,{cookie:session}); assert.equal(result.status,expected,JSON.stringify(result.data)); return result.data; };
   let patient,plan,step,paymentKey,paymentPayload;
+  await t.test('statement remains internally consistent when collection commits during response assembly',async()=>{
+   const concurrentPatient=(await command('patient.create',{fullName:'اختبار تحصيل متزامن'})).id;
+   const concurrentPlan=(await command('plan.create',{patientId:concurrentPatient,title:'اختبار الكشف',specialty:'general',origin:'new',currency:'SAR',agreed:'1000'})).id;
+   await command('plan.activate',{planId:concurrentPlan});
+   let collected=false;
+   afterStatementRead=async()=>{
+    await db.query('SELECT clinic.execute($1,$2,$3,$4,$5::jsonb)',[owner,branch,randomUUID(),'payment.collect',JSON.stringify({planId:concurrentPlan,amount:'100',currency:'SAR',rate:'1'})]);
+    collected=true;
+   };
+   const snapshot=await get(`${path}/patients/${concurrentPatient}/statement`);
+   assert.equal(collected,true);
+   assert.deepEqual(snapshot.balances,[{currency:'SAR',balance:'1000.00'}]);
+   assert.equal(snapshot.entries.length,1,'a response cannot combine the prior balance with the new payment');
+   const next=await get(`${path}/patients/${concurrentPatient}/statement`);
+   assert.deepEqual(next.balances,[{currency:'SAR',balance:'900.00'}]);
+   assert.equal(next.entries.length,2);
+  });
+  await t.test('readiness rejects schema preceding the approval guards',async()=>{
+   assert.deepEqual(await get('/health/ready'),{ready:true});
+   await db.exec('SET SESSION AUTHORIZATION postgres');
+   await db.exec('DELETE FROM clinic.schema_version WHERE version=5');
+   await db.exec('SET SESSION AUTHORIZATION journey_runtime');
+   assert.deepEqual(await get('/health/ready',cookie,503),{ready:false});
+   await db.exec('SET SESSION AUTHORIZATION postgres');
+   await db.exec('INSERT INTO clinic.schema_version(version) VALUES(5)');
+   await db.exec('SET SESSION AUTHORIZATION journey_runtime');
+  });
+  await t.test('statement preserves exact cents in nested journal lines above Number precision',async()=>{
+   const precisePatient=(await command('patient.create',{fullName:'اختبار دقة دفتر الحساب'})).id;
+   const precisePlan=(await command('plan.create',{patientId:precisePatient,title:'اختبار مبلغ كبير',specialty:'general',origin:'new',currency:'YER',agreed:'9007199254740991.99'})).id;
+   await command('plan.activate',{planId:precisePlan});
+   const statement=await get(`${path}/patients/${precisePatient}/statement`);
+   assert.deepEqual(statement.balances,[{currency:'YER',balance:'9007199254740991.99'}]);
+   const line=statement.entries[0].lines.find(l=>l.account==='RECEIVABLE');
+   assert.equal(line.debit,'9007199254740991.99');
+   assert.equal(line.credit,'0.00');
+   for(const entry of statement.entries) for(const item of entry.lines) {
+    assert.equal(typeof item.debit,'string'); assert.equal(typeof item.credit,'string');
+   }
+  });
   await t.test('new patient reaches signed clinical visit and exact cross-currency statement',async()=>{
    assert.equal((await get('/api/me')).user.id,owner);
    assert.equal((await get('/api/branches')).branches.length,2);

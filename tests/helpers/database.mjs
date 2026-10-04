@@ -1,10 +1,10 @@
 import { PGlite } from '@electric-sql/pglite';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
 export async function createDatabase() {
   const db = new PGlite();
-  for (const file of ['001_core.sql', '002_commands.sql']) {
+  for (const file of (await readdir(new URL('../../db/',import.meta.url))).filter(f=>/^\d+.*\.sql$/.test(f)).sort()) {
     await db.exec(await readFile(new URL(`../../db/${file}`, import.meta.url), 'utf8'));
   }
   return db;
@@ -25,7 +25,7 @@ export async function fixture(db) {
   };
   const activePlan = async (overrides = {}) => {
     const id = await plan(overrides);
-    await command(overrides.origin === 'legacy' ? 'legacy.activate' : 'plan.activate', { planId: id });
+    await command(overrides.origin === 'legacy' ? 'legacy.activate' : 'plan.activate', { planId: id, expectedVersion: 1 });
     return id;
   };
   const balance = async (planId, account = 'RECEIVABLE') => (await db.query(`SELECT coalesce(sum(l.debit-l.credit),0)::text AS amount FROM clinic.journal j JOIN clinic.journal_line l ON l.journal_id=j.id WHERE j.plan_id=$1 AND l.account=$2`, [planId, account])).rows[0].amount;

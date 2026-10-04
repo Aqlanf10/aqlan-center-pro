@@ -37,7 +37,7 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
       const url = new URL(req.url,origin), path = url.pathname;
       if (req.method === 'GET' && path === '/health/live') return send(200,{live:true});
       if (req.method === 'GET' && path === '/health/ready') {
-        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<3) throw new Error(); return send(200,{ready:true}); }
+        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<5) throw new Error(); return send(200,{ready:true}); }
         catch { return send(503,{ready:false}); }
       }
       if (!path.startsWith('/api/')) {
@@ -92,22 +92,36 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
       await permission(user.id,branch,'patient.read');
       if (!patient) {
         const q=(url.searchParams.get('q')||'').trim(); if(q.length>100) fail(400,'SEARCH_TOO_LONG');
-        const r=await db.query("SELECT p.id,p.file_number,p.full_name,p.phone,p.birth_date,p.created_at FROM clinic.patient p JOIN clinic.patient_branch pb ON pb.patient_id=p.id WHERE pb.branch_id=$1 AND ($2='' OR p.full_name ILIKE '%'||$2||'%' OR p.phone ILIKE '%'||$2||'%' OR p.file_number::text=$2) ORDER BY p.created_at DESC,p.id LIMIT 100",[branch,q]); return send(200,{patients:r.rows});
+        const r=await db.query("SELECT p.id,p.file_number,p.full_name,p.phone,p.birth_date::text,p.created_at FROM clinic.patient p JOIN clinic.patient_branch pb ON pb.patient_id=p.id WHERE pb.branch_id=$1 AND ($2='' OR p.full_name ILIKE '%'||$2||'%' OR p.phone ILIKE '%'||$2||'%' OR p.file_number::text=$2) ORDER BY p.created_at DESC,p.id LIMIT 100",[branch,q]); return send(200,{patients:r.rows});
       }
       await requirePatient(user.id,branch,patient);
-      if (!child) { const r=await db.query('SELECT id,file_number,full_name,phone,birth_date,created_at FROM clinic.patient WHERE id=$1',[patient]); return send(200,{patient:r.rows[0]}); }
+      if (!child) { const r=await db.query('SELECT id,file_number,full_name,phone,birth_date::text,created_at FROM clinic.patient WHERE id=$1',[patient]); return send(200,{patient:r.rows[0]}); }
       if (child==='plans') {
         await permission(user.id,branch,'clinical.read');
-        const r=await db.query("SELECT p.*,coalesce((SELECT jsonb_agg(s ORDER BY s.id) FROM clinic.plan_step s WHERE s.plan_id=p.id),'[]'::jsonb) AS steps FROM clinic.plan p WHERE p.patient_id=$1 AND p.branch_id=$2 ORDER BY p.created_at DESC",[patient,branch]);
+        const r=await db.query("SELECT p.*,p.as_of_date::text AS as_of_date,coalesce((SELECT jsonb_agg(s ORDER BY s.id) FROM clinic.plan_step s WHERE s.plan_id=p.id),'[]'::jsonb) AS steps FROM clinic.plan p WHERE p.patient_id=$1 AND p.branch_id=$2 ORDER BY p.created_at DESC",[patient,branch]);
         let finance=true; try { await permission(user.id,branch,'finance.read'); } catch(e) { if(e.code!=='42501') throw e; finance=false; }
         if(!finance) for(const p of r.rows) for(const key of ['agreed','previously_paid','currency','disputed']) delete p[key];
         return send(200,{plans:r.rows});
       }
-      if(child==='visits') { await permission(user.id,branch,'clinical.read'); return send(200,{visits:(await db.query('SELECT v.*,p.title AS plan_title FROM clinic.visit v JOIN clinic.plan p ON p.id=v.plan_id WHERE v.patient_id=$1 AND v.branch_id=$2 ORDER BY v.occurred_on DESC,v.id',[patient,branch])).rows}); }
+      if(child==='visits') { await permission(user.id,branch,'clinical.read'); return send(200,{visits:(await db.query('SELECT v.*,v.occurred_on::text AS occurred_on,p.title AS plan_title FROM clinic.visit v JOIN clinic.plan p ON p.id=v.plan_id WHERE v.patient_id=$1 AND v.branch_id=$2 ORDER BY v.occurred_on DESC,v.id',[patient,branch])).rows}); }
       await permission(user.id,branch,'finance.read');
-      const balances=await db.query("SELECT l.currency,sum(l.debit-l.credit)::text AS balance FROM clinic.journal j JOIN clinic.journal_line l ON l.journal_id=j.id WHERE j.patient_id=$1 AND j.branch_id=$2 AND l.account IN ('RECEIVABLE','PATIENT_CREDIT') GROUP BY l.currency ORDER BY l.currency",[patient,branch]);
-      const entries=await db.query("SELECT j.*,p.amount,p.currency AS payment_currency,p.debt_amount,p.debt_currency,p.rate,coalesce((SELECT jsonb_agg(l ORDER BY l.id) FROM clinic.journal_line l WHERE l.journal_id=j.id),'[]'::jsonb) AS lines FROM clinic.journal j LEFT JOIN clinic.payment p ON p.journal_id=j.id WHERE j.patient_id=$1 AND j.branch_id=$2 ORDER BY j.recorded_at,j.id",[patient,branch]);
-      return send(200,{balances:balances.rows,entries:entries.rows});
+      // One statement gives both views the same PostgreSQL snapshot during concurrent collection.
+      // Cast every monetary value before JSON serialization; rounded cents cannot be recovered.
+      const statement=await db.query(`WITH balances AS (
+        SELECT l.currency,sum(l.debit-l.credit)::text AS balance
+        FROM clinic.journal j JOIN clinic.journal_line l ON l.journal_id=j.id
+        WHERE j.patient_id=$1 AND j.branch_id=$2 AND l.account IN ('RECEIVABLE','PATIENT_CREDIT')
+        GROUP BY l.currency
+      ), entries AS (
+        SELECT j.*,p.amount::text AS amount,p.currency AS payment_currency,
+          p.debt_amount::text AS debt_amount,p.debt_currency,p.rate::text AS rate,
+          coalesce((SELECT jsonb_agg(to_jsonb(l) || jsonb_build_object('debit',l.debit::text,'credit',l.credit::text) ORDER BY l.id)
+            FROM clinic.journal_line l WHERE l.journal_id=j.id),'[]'::jsonb) AS lines
+        FROM clinic.journal j LEFT JOIN clinic.payment p ON p.journal_id=j.id
+        WHERE j.patient_id=$1 AND j.branch_id=$2
+      ) SELECT coalesce((SELECT jsonb_agg(b ORDER BY b.currency) FROM balances b),'[]'::jsonb) AS balances,
+          coalesce((SELECT jsonb_agg(e ORDER BY e.recorded_at,e.id) FROM entries e),'[]'::jsonb) AS entries`,[patient,branch]);
+      return send(200,statement.rows[0]);
     } catch(e) {
       const known=e.status || (e.code==='42501'?403:e.code==='P0002'?404:e.code?.startsWith('23')?409:['P0001','22P02','22007','22008','22003'].includes(e.code)?400:500);
       const safeCode=e.status?e.message:e.code==='42501'?'FORBIDDEN':e.code==='P0002'?'NOT_FOUND':e.code==='P0001'&&/^[A-Z_]+$/.test(e.message)?e.message:known===409?'CONFLICT':known===400?'INVALID_INPUT':'INTERNAL_ERROR';
