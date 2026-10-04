@@ -3,6 +3,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { hashPassword, verifyPassword } from './password.mjs';
+import { readPatientHistory, reviewPatientHistory } from './patient-history.mjs';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const hash = token => createHash('sha256').update(token).digest('hex');
 function fail(status, code) { throw Object.assign(new Error(code), { status }); }
@@ -37,7 +38,7 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
       const url = new URL(req.url,origin), path = url.pathname;
       if (req.method === 'GET' && path === '/health/live') return send(200,{live:true});
       if (req.method === 'GET' && path === '/health/ready') {
-        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<5) throw new Error(); return send(200,{ready:true}); }
+        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<6) throw new Error(); return send(200,{ready:true}); }
         catch { return send(503,{ready:false}); }
       }
       if (!path.startsWith('/api/')) {
@@ -79,6 +80,15 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
         const r=await db.query('SELECT b.id,b.name,b.timezone,array_agg(DISTINCT rp.permission) AS permissions FROM clinic.branch b JOIN clinic.membership m ON m.branch_id=b.id JOIN clinic.role_permission rp ON rp.role_id=m.role_id WHERE m.staff_id=$1 AND b.active GROUP BY b.id ORDER BY b.name',[user.id]); return send(200,{branches:r.rows});
       }
       if (path==='/api/specialties' && req.method==='GET') return send(200,{specialties:(await db.query('SELECT code,name_ar FROM clinic.specialty ORDER BY code')).rows});
+      const historyRoute=path.match(/^\/api\/branches\/([^/]+)\/patients\/([^/]+)\/history$/);
+      if(historyRoute) {
+        const [,branchId,patientId]=historyRoute;
+        if(!UUID.test(branchId)||!UUID.test(patientId)) fail(404,'NOT_FOUND');
+        const context={db,actorId:user.id,branchId,patientId};
+        if(req.method==='GET') return send(200,await readPatientHistory(context));
+        const data=await body(req);
+        return send(200,await reviewPatientHistory({...context,key:data.key,payload:data.payload}));
+      }
       const route=path.match(/^\/api\/branches\/([^/]+)\/(commands|patients)(?:\/([^/]+)(?:\/(plans|visits|statement))?)?$/);
       if (!route || !UUID.test(route[1]) || (route[3]&&!UUID.test(route[3]))) fail(404,'NOT_FOUND');
       const [,branch,resource,patient,child]=route;

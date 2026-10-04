@@ -28,6 +28,7 @@ CREATE TABLE clinic.patient_history_revision (
  reason text NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 2000),
  observed_on date NOT NULL CHECK(isfinite(observed_on)),
  reviewed_by uuid NOT NULL REFERENCES clinic.staff,
+ reviewed_by_name text NOT NULL,
  reviewed_at timestamptz NOT NULL DEFAULT now(),
  FOREIGN KEY(patient_id,branch_id) REFERENCES clinic.patient_branch,
  UNIQUE(patient_id,branch_id,version)
@@ -100,9 +101,10 @@ BEGIN
  WHERE patient_id=p_patient AND branch_id=p_branch;
  IF current_version<>(p_data->>'expectedVersion')::integer THEN RAISE EXCEPTION 'STALE_HISTORY_VERSION'; END IF;
  next_version:=current_version+1;
- INSERT INTO clinic.patient_history_revision(patient_id,branch_id,version,medical,dental,allergies,source,reason,observed_on,reviewed_by)
+ INSERT INTO clinic.patient_history_revision(patient_id,branch_id,version,medical,dental,allergies,source,reason,observed_on,reviewed_by,reviewed_by_name)
  VALUES(p_patient,p_branch,next_version,p_data->'medical',p_data->'dental',p_data->'allergies',
-   p_data->>'source',trim(p_data->>'reason'),observed,p_actor) RETURNING id INTO revision_id;
+   p_data->>'source',trim(p_data->>'reason'),observed,p_actor,
+   (SELECT display_name FROM clinic.staff WHERE id=p_actor)) RETURNING id INTO revision_id;
  command_result:=jsonb_build_object('id',revision_id,'version',next_version,'command','patient.history.review');
  INSERT INTO clinic.audit(actor_id,branch_id,action,entity_id,metadata)
  VALUES(p_actor,p_branch,'patient.history.review',revision_id,

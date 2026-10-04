@@ -68,14 +68,14 @@ test('authenticated runtime HTTP: integrated new and legacy patient journeys wit
    assert.deepEqual(next.balances,[{currency:'SAR',balance:'900.00'}]);
    assert.equal(next.entries.length,2);
   });
-  await t.test('readiness rejects schema preceding the approval guards',async()=>{
+  await t.test('readiness rejects schema preceding reviewed patient history',async()=>{
    assert.deepEqual(await get('/health/ready'),{ready:true});
    await db.exec('SET SESSION AUTHORIZATION postgres');
-   await db.exec('DELETE FROM clinic.schema_version WHERE version=5');
+   await db.exec('DELETE FROM clinic.schema_version WHERE version=6');
    await db.exec('SET SESSION AUTHORIZATION journey_runtime');
    assert.deepEqual(await get('/health/ready',cookie,503),{ready:false});
    await db.exec('SET SESSION AUTHORIZATION postgres');
-   await db.exec('INSERT INTO clinic.schema_version(version) VALUES(5)');
+   await db.exec('INSERT INTO clinic.schema_version(version) VALUES(6)');
    await db.exec('SET SESSION AUTHORIZATION journey_runtime');
   });
   await t.test('statement preserves exact cents in nested journal lines above Number precision',async()=>{
@@ -148,6 +148,38 @@ test('authenticated runtime HTTP: integrated new and legacy patient journeys wit
    const statement=await get(`${path}/patients/${legacyPatient}/statement`); assert.deepEqual(statement.balances,[{currency:'SAR',balance:'600.00'}]); assert.equal(statement.entries.length,1); assert.equal(statement.entries[0].kind,'legacy_opening'); assert.equal(statement.entries[0].lines.some(l=>l.account==='CASH'),false);
    const followup=(await command('visit.create',{planId:previous,note:'متابعة العلاج الذي بدأ قبل النظام'})).id; await command('visit.sign',{visitId:followup});
    assert.deepEqual((await get(`${path}/patients/${legacyPatient}/statement`)).balances,[{currency:'SAR',balance:'600.00'}]);
+  });
+  await t.test('reviewed history round-trips through authenticated HTTP with identity, version and branch protection',async()=>{
+   const route=`${path}/patients/${patient}/history`;
+   const initial=await get(route,doctorCookie);
+   assert.equal(initial.version,0); assert.equal(initial.current,null); assert.equal(initial.scope,'branch');
+   const review={key:randomUUID(),actorId:owner,payload:{expectedVersion:0,
+    medical:{status:'unknown',details:''},dental:{status:'none',details:''},
+    allergies:{status:'reported',details:'مادة اصطناعية للاختبار فقط'},
+    source:'patient_report',reason:'مراجعة معلومات اصطناعية',observedOn:'2024-01-02'}};
+   const saved=await request(route,{cookie:doctorCookie,body:review});
+   assert.equal(saved.status,200); assert.equal(saved.data.version,1);
+   assert.deepEqual((await request(route,{cookie:doctorCookie,body:review})).data,saved.data);
+   const read=await get(route,doctorCookie);
+   assert.equal(read.current.reviewed_by,doctor,'Actor comes from the authenticated session');
+   assert.equal(read.current.reviewed_by_name,'الطبيب','Reviewer name is captured by the server, not supplied by the client');
+   assert.equal(read.current.observed_on,'2024-01-02');
+   assert.equal(read.current.medical.status,'unknown'); assert.equal(read.current.dental.status,'none');
+   assert.equal(read.current.allergies.details,review.payload.allergies.details); assert.equal(read.revisions.length,1);
+   const stale=await request(route,{cookie:doctorCookie,body:{...review,key:randomUUID()}});
+   assert.equal(stale.status,400); assert.equal(stale.data.error,'STALE_HISTORY_VERSION');
+   const cross=await request(`/api/branches/${otherBranch}/patients/${patient}/history`,{cookie});
+   assert.equal(cross.status,404);
+   const forged=await fetch(base+route,{method:'POST',headers:{Cookie:doctorCookie,'Content-Type':'application/json'},body:JSON.stringify(review)});
+   assert.equal(forged.status,403);
+   await db.exec('SET SESSION AUTHORIZATION postgres');
+   await db.query("DELETE FROM clinic.role_permission WHERE role_id=$1 AND permission='clinical.write'",[doctorRole]);
+   await db.exec('SET SESSION AUTHORIZATION journey_runtime');
+   assert.equal((await request(route,{cookie:doctorCookie,body:review})).status,403);
+   await db.exec('SET SESSION AUTHORIZATION postgres');
+   await db.query("INSERT INTO clinic.role_permission VALUES($1,'clinical.write')",[doctorRole]);
+   await db.exec('SET SESSION AUTHORIZATION journey_runtime');
+   assert.equal((await get(route,doctorCookie)).revisions.length,1);
   });
   await t.test('clinical-only doctor sees no structured finance fields or statement',async()=>{
    const branches=(await get('/api/branches',doctorCookie)).branches; assert.equal(branches.length,1); assert.equal(branches[0].permissions.includes('finance.read'),false);
