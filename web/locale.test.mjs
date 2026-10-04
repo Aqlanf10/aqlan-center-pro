@@ -41,3 +41,15 @@ test('current specialties, financial safety labels and intake review have Englis
    assert.match(messages[key],/[A-Za-z]/);
  }
 });
+
+test('inline tooth metadata translates without altering protected procedure text',()=>{
+ const procedure={textContent:'تقويم الأسنان',parentElement:{closest:()=>({})}};
+ const tooth={textContent:'· السن 11',parentElement:{closest:()=>null}};
+ const nodes=[procedure,tooth];
+ document.createTreeWalker=()=>{let i=0;return{nextNode:()=>nodes[i++]||null};};
+ setLocale('en');localize({querySelectorAll:()=>[]});
+ assert.equal(procedure.textContent,'تقويم الأسنان');
+ assert.equal(tooth.textContent,'· Tooth 11');
+ setLocale('ar');localize({querySelectorAll:()=>[]});
+ assert.equal(tooth.textContent,'· السن 11');
+});
