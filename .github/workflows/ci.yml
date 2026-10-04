@@ -81,6 +81,8 @@ jobs:
           psql --version | grep -E 'PostgreSQL\) 17\.'
           pg_dump --version | grep -E 'PostgreSQL\) 17\.'
           pg_restore --version | grep -E 'PostgreSQL\) 17\.'
+      - name: Verify PostgreSQL TLS configuration
+        run: python3 -m unittest discover -s scripts -p test_pg_support.py -v
       - name: Apply migrations atomically
         run: python3 scripts/migrate.py
       - name: Verify migration re-run is safe
