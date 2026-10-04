@@ -1,9 +1,36 @@
 # Isolated Railway staging — Aqlan Center Pro
 
-This is a deployment procedure, not evidence of a deployment. Read-only inventory on
-2026-10-05 found no `aqlan-center-pro` project. Existing `aqlan-center`,
+This is a deployment procedure with the bounded provisioning record below.
+Initial read-only inventory on 2026-10-05 found no `aqlan-center-pro` project. Existing `aqlan-center`,
 `aqlan-center-mini`, `aqlan-dental-pro` and other projects are outside this procedure.
 Use synthetic patients only. Record the exact Git SHA and CI run before deployment.
+
+## Provisioning record — 2026-10-05, Asia/Aden
+
+Only the new project's private database has been provisioned. No application or
+migration service has been deployed and no real patient records have been loaded.
+The existing projects listed above were not modified.
+
+| Resource | Verified value |
+| --- | --- |
+| New project | `aqlan-center-pro` / `a0d375a9-fbaa-4342-8cd7-766477c4753c` |
+| Environment | `staging` / `e058251a-0b65-475a-a3eb-301c9d0f7ab8` |
+| Database service | `PostgreSQL17` / `8ebe5bb8-33dc-4616-9924-03cbac140e9f` |
+| Persistent volume | `976a3bec-7580-4465-9c1a-97c297a8e9cf`, mounted at `/var/lib/postgresql/data` |
+| Database image | `ghcr.io/railwayapp-templates/postgres-ssl:17` |
+| Successful database deployment | `468c213e-5772-454b-84de-0f8a153de7bc` |
+| Actual server version | `17.11 (Debian 17.11-1.pgdg13+2)`, verified via SSH `psql SHOW server_version` |
+
+Generated database credentials were written directly to Railway through stdin;
+they are not stored in this repository. No public database endpoint was created.
+The runtime login, schema migrations, bootstrap account and application's external
+HTTPS path still require the operator sequence below after the final CI gate.
+
+Local canonical-LF rehearsal on exact Git archive
+`cea050d16ffa88e5c8df265f3f8fb05a2e1c446b` passed against a fresh PostgreSQL 17.11
+cluster: migrations 1–5, replay, all three real concurrency scenarios, and backup
+restoration/counts/schema versions/per-currency ledger/sequence checks. This is
+local evidence; it does not claim those operations have run on Railway.
 
 ## Resources and credentials
 
