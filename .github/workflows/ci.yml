@@ -20,6 +20,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Production image build
+        run: docker build --tag aqlan-center-pro:ci .
       - name: Production dependency security gate
         run: npm audit --omit=dev --audit-level=high
   postgres:
@@ -39,13 +41,21 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres@127.0.0.1:5432/aqlan_ci_test
       TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/aqlan_ci_test
+      RESTORE_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/aqlan_ci_restore_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Select matching PostgreSQL 17 clients
+        run: |
+          if [ ! -x /usr/lib/postgresql/17/bin/pg_dump ]; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client-17
+          fi
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
       - name: Apply migrations atomically
         run: python3 scripts/migrate.py
       - name: Verify migration re-run is safe
         run: python3 scripts/migrate.py
       - name: Verify real PostgreSQL concurrency and idempotency
         run: python3 scripts/test-postgres.py
+      - name: Rehearse isolated backup and restore
+        run: python3 scripts/restore-test.py

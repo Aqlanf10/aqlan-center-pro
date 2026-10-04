@@ -95,3 +95,29 @@ test('PUBLIC has no access to internal schema or command functions', async () =>
     assert.deepEqual(tables.rows, []);
   } finally { await db.close(); }
 });
+
+test('runtime role can execute authorized command but cannot bypass it with DML, DDL or owner assumption', async()=>{
+  const db=new PGlite();
+  try {
+    for(const name of ['001_core.sql','002_commands.sql','003_auth.sql','004_runtime_boundary.sql']) await db.exec(await readFile(new URL(`../db/${name}`,import.meta.url),'utf8'));
+    const actor=randomUUID(),branch=randomUUID(),role=randomUUID();
+    await db.query('INSERT INTO clinic.staff(id,display_name) VALUES($1,$2)',[actor,'Synthetic runtime actor']);
+    await db.query('INSERT INTO clinic.branch(id,name) VALUES($1,$2)',[branch,'Synthetic runtime branch']);
+    await db.query('INSERT INTO clinic.role(id,name) VALUES($1,$2)',[role,'Synthetic writer']);
+    await db.query('INSERT INTO clinic.role_permission VALUES($1,$2)',[role,'patient.write']);
+    await db.query('INSERT INTO clinic.membership VALUES($1,$2,$3)',[actor,branch,role]);
+    await db.exec('CREATE ROLE security_fixture_runtime LOGIN; GRANT clinic_runtime TO security_fixture_runtime; SET SESSION AUTHORIZATION security_fixture_runtime');
+    const success=await db.query('SELECT clinic.execute($1,$2,$3,$4,$5::jsonb) AS result',[actor,branch,randomUUID(),'patient.create',JSON.stringify({fullName:'Synthetic runtime patient'})]);
+    assert.equal(success.rows[0].result.command,'patient.create');
+    for(const sql of [
+      "UPDATE clinic.patient SET full_name='Tampered'",
+      'DELETE FROM clinic.journal',
+      'INSERT INTO clinic.journal_line(journal_id,account,currency,debit) VALUES(gen_random_uuid(),\'CASH\',\'USD\',1)',
+      "INSERT INTO clinic.role_permission SELECT id,'finance.collect' FROM clinic.role",
+      'CREATE TABLE clinic.attacker(id int)',
+      'SET ROLE clinic_command_owner',
+      'ALTER TABLE clinic.journal DISABLE TRIGGER ALL',
+    ]) await assert.rejects(db.exec(sql),error=>error.code==='42501');
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM clinic.patient')).rows[0].n,1);
+  } finally { await db.close(); }
+});

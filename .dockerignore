@@ -10,3 +10,6 @@ coverage
 docs
 *.zip
 *.mp4
+
+**/*.test.mjs
+__pycache__

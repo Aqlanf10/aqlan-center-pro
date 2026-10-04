@@ -3,7 +3,7 @@
 CREATE FUNCTION clinic.execute(p_actor uuid,p_branch uuid,p_key uuid,p_command text,p_data jsonb)
 RETURNS jsonb LANGUAGE plpgsql SET search_path=pg_catalog,clinic AS $$
 DECLARE
- required_permission text; oldop clinic.operation%ROWTYPE; command_result jsonb; entity uuid; journal_id uuid;
+ audit_metadata jsonb := '{}'; required_permission text; oldop clinic.operation%ROWTYPE; command_result jsonb; entity uuid; journal_id uuid;
  planrow clinic.plan%ROWTYPE; visitrow clinic.visit%ROWTYPE; original clinic.journal%ROWTYPE;
  amount numeric; debt_amount numeric; exchange_rate numeric; paid_currency text; remaining numeric;
  today date := (now() AT TIME ZONE 'Asia/Aden')::date;
@@ -12,11 +12,13 @@ BEGIN
  required_permission:=CASE p_command
  WHEN 'patient.create' THEN 'patient.write' WHEN 'plan.create' THEN 'clinical.write'
  WHEN 'plan.activate' THEN 'finance.agree' WHEN 'legacy.activate' THEN 'finance.opening'
+ WHEN 'legacy.review' THEN 'finance.opening'
  WHEN 'step.create' THEN 'clinical.write' WHEN 'visit.create' THEN 'clinical.write'
  WHEN 'visit.sign' THEN 'clinical.write' WHEN 'payment.collect' THEN 'finance.collect'
  WHEN 'payment.reverse' THEN 'finance.reverse' END;
  IF required_permission IS NULL THEN RAISE EXCEPTION 'UNKNOWN_COMMAND'; END IF;
  PERFORM clinic.require_permission(p_actor,p_branch,required_permission);
+ IF p_command='legacy.review' THEN PERFORM clinic.require_permission(p_actor,p_branch,'finance.agree'); END IF;
  INSERT INTO clinic.operation(branch_id,key,actor_id,command,payload)
  VALUES(p_branch,p_key,p_actor,p_command,p_data) ON CONFLICT DO NOTHING;
  SELECT * INTO STRICT oldop FROM clinic.operation WHERE branch_id=p_branch AND key=p_key FOR UPDATE;
@@ -41,6 +43,25 @@ BEGIN
      (p_data->>'agreed')::numeric,(p_data->>'previouslyPaid')::numeric,p_data->>'sourceSystem',p_data->>'sourceRecordId',
      (p_data->>'asOfDate')::date,coalesce((p_data->>'disputed')::boolean,false),coalesce(p_data->'clinicalSummary','{}'),p_actor)
    RETURNING id INTO entity;
+ ELSIF p_command='legacy.review' THEN
+   SELECT * INTO STRICT planrow FROM clinic.plan WHERE id=(p_data->>'planId')::uuid AND branch_id=p_branch FOR UPDATE;
+   IF planrow.origin<>'legacy' OR planrow.status<>'draft' OR EXISTS(SELECT 1 FROM clinic.journal WHERE plan_id=planrow.id)
+   THEN RAISE EXCEPTION 'ONLY_DRAFT_LEGACY_REVIEW_SUPPORTED'; END IF;
+   IF NOT (p_data ?& ARRAY['agreed','previouslyPaid','disputed','reason']) OR
+      p_data - ARRAY['planId','agreed','previouslyPaid','disputed','reason'] <> '{}'::jsonb OR
+      jsonb_typeof(p_data->'agreed') NOT IN ('string','null') OR
+      jsonb_typeof(p_data->'previouslyPaid') NOT IN ('string','null') OR
+      jsonb_typeof(p_data->'disputed')<>'boolean' OR jsonb_typeof(p_data->'reason')<>'string'
+   THEN RAISE EXCEPTION 'INVALID_REVIEW_FIELDS'; END IF;
+   IF length(trim(coalesce(p_data->>'reason',''))) NOT BETWEEN 3 AND 2000 THEN RAISE EXCEPTION 'REVIEW_REASON_REQUIRED'; END IF;
+   IF coalesce(p_data->>'agreed','0') !~ '^\d{1,16}(\.\d{1,2})?$' OR
+      coalesce(p_data->>'previouslyPaid','0') !~ '^\d{1,16}(\.\d{1,2})?$' THEN RAISE EXCEPTION 'INVALID_AMOUNT'; END IF;
+   audit_metadata:=jsonb_build_object('reason',trim(p_data->>'reason'),
+     'before',jsonb_build_object('agreed',planrow.agreed,'previouslyPaid',planrow.previously_paid,'disputed',planrow.disputed),
+     'after',jsonb_build_object('agreed',p_data->'agreed','previouslyPaid',p_data->'previouslyPaid','disputed',p_data->'disputed'));
+   UPDATE clinic.plan SET agreed=(p_data->>'agreed')::numeric, previously_paid=(p_data->>'previouslyPaid')::numeric,
+     disputed=(p_data->>'disputed')::boolean WHERE id=planrow.id;
+   entity:=planrow.id;
  ELSIF p_command IN ('plan.activate','legacy.activate','step.create','visit.create','payment.collect') THEN
    SELECT * INTO STRICT planrow FROM clinic.plan WHERE id=(p_data->>'planId')::uuid AND branch_id=p_branch FOR UPDATE;
    IF p_command IN ('plan.activate','legacy.activate') THEN
@@ -123,7 +144,7 @@ BEGIN
      SELECT entity,l.account,l.currency,l.credit,l.debit FROM clinic.journal_line l WHERE l.journal_id=original.id;
  END IF;
  command_result:=jsonb_build_object('id',entity,'command',p_command);
- INSERT INTO clinic.audit(actor_id,branch_id,action,entity_id) VALUES(p_actor,p_branch,p_command,entity);
+ INSERT INTO clinic.audit(actor_id,branch_id,action,entity_id,metadata) VALUES(p_actor,p_branch,p_command,entity,audit_metadata);
  UPDATE clinic.operation SET result=command_result WHERE branch_id=p_branch AND key=p_key;
  RETURN command_result;
 END $$;

@@ -4,7 +4,7 @@ Review date: 2026-10-05. This is a bounded source review and local test record, 
 
 ## Reviewed boundaries
 
-- `db/001_core.sql`, `db/002_commands.sql`, `db/003_auth.sql`.
+- `db/001_core.sql` through `db/004_runtime_boundary.sql`.
 - `server/app.mjs`, `server/password.mjs`, `server/start.mjs`.
 - Monetary domain inputs and conversion in `packages/domain`.
 
@@ -12,11 +12,12 @@ The HTTP service is a trusted backend. Its database credential and session looku
 
 ## Verified by security tests
 
-`node --test tests/security.test.mjs` passed 3 tests, with no skipped tests:
+`node --test tests/security.test.mjs` passed 4 tests, with no skipped tests:
 
 1. Anonymous command requests, missing/wrong Origin, and cross-site mutation requests are rejected. Client body/header actor identifiers do not replace the authenticated session actor. Numeric JSON money is rejected; source/config paths are not served; API responses carry no-store and framing restrictions.
 2. Authorization is scoped to branch and rechecked before idempotent replay. Disabled staff, disabled branches and removed permission cannot reuse an old successful key. Another actor cannot reuse a key. Rejected attempts do not add patients, operations or audit entries.
 3. PUBLIC has no schema/table/function access after the reviewed migrations.
+4. After migration 004, an isolated runtime login can execute an authorized patient command, but direct clinical/financial DML, permission grants, schema DDL, disabling financial triggers and assumption of the command owner are rejected. The test uses `SET SESSION AUTHORIZATION`, not merely `SET ROLE` from a superuser session, to check real role-assumption restrictions.
 
 HTTP tests use a narrow database stub to observe the actor passed to SQL. SQL tests use PGlite. These tests do **not** prove production reverse proxy, TLS, external PostgreSQL roles, multi-process throttling, or backup behavior. Separate database tests cover transactional and accounting behavior.
 
@@ -26,12 +27,13 @@ HTTP tests use a narrow database stub to observe the actor passed to SQL. SQL te
 - Reversal query's journal identifier collided with a local variable. Qualified the reference.
 - A SQL CHECK with nullable legacy source fields could pass as UNKNOWN. Explicit non-null source checks added.
 - New-plan intake accepted a historical opening date. New intake now forbids that legacy-only field.
+- Migration 004 adds dedicated non-login runtime and command roles, constrained SECURITY DEFINER commands with a fixed search_path, explicit read/session grants, and no runtime clinical/financial DML. Local PostgreSQL-compatible runtime attack-path tests pass. This replaces the earlier SECURITY INVOKER role-boundary blocker.
 
 ## Outstanding production gates
 
 | Severity | Evidence / limitation | Required disposition |
 | --- | --- | --- |
-| High | Reviewed command function uses SECURITY INVOKER. Runtime execution consequently needs underlying mutation privileges; a non-owner role alone does not enforce a command-only database boundary. | Provision and verify least-privilege roles. Prefer a dedicated non-login owner of narrowly scoped SECURITY DEFINER commands with fixed search_path, runtime EXECUTE only for clinical/financial mutations, and explicitly restricted read/session grants. Test that runtime direct financial writes, role grants, DDL, and owner assumption fail. Do not deploy using the migration owner. |
+| High | The isolated runtime-role design passes local tests, but the actual Railway PostgreSQL login, grants and migration-user separation have not been provisioned or verified by this review. | Apply migration 004 using a privileged migration operator, grant the HTTP login only runtime membership, verify the production driver and effective privileges, and repeat permission checks against staging. Do not deploy using the migration owner. |
 | High | Real TLS termination, production cookie behavior, external database role grants, and backup restoration have not been exercised by these security tests. | Verify in an isolated Railway staging environment before real patient data. Never convert local test success into a production claim. |
 | Medium | Login throttling is an in-memory map per Node process. Multiple replicas and restarts do not share budgets; proxy peers may also share an IP budget. | Add a shared rate limiter and validate proxy identity handling before multiple replicas or public clinical operation. Keep arbitrary forwarded-IP headers untrusted. |
 | Medium | Credential recovery/reset, user administration, session revocation controls and authentication event audit are not yet complete. | Finish and test operator/staff account lifecycle before enabling actual clinic staff access. Never put passwords in git, logs, URLs or client responses. |

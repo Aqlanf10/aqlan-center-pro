@@ -6,3 +6,6 @@ coverage/
 *.log
 uploads/
 backups/
+
+__pycache__/
+*.pyc
