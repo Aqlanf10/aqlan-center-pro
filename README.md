@@ -1,19 +1,28 @@
 # عقلان سنتر برو | Aqlan Center Pro
 
-Owned by **Dr. Aqlan Alkamel — الدكتور عقلان الكامل**. Proprietary; all rights reserved.
+**منصة الدكتور عقلان الكامل لإدارة مركز أسنان متعدد التخصصات والفروع.**
 
-Integrated multispecialty dental platform, designed for multiple branches, Arabic RTL, legacy patient migration, and YER/SAR/USD accounting. Target hosting: Railway frontend, backend and PostgreSQL.
+المالك: **الدكتور عقلان الكامل — Dr. Aqlan Alkamel**. مستودع خاص. حقوق الكود المخصص محفوظة للمالك، وتبقى تراخيص مكونات الطرف الثالث لأصحابها.
 
-## Current milestone
+## ابدأ من هنا — إلزامي لكل مهندس ووكيل
 
-First domain foundation only: exact currency conversion and reviewed legacy opening-balance proposals. **Not a working clinic application; no production deployment or patient-data storage.**
+1. اقرأ [تعليمات العمل والدمج AGENTS.md](AGENTS.md).
+2. اقرأ [الخطة الشاملة المعتمدة — 22 قسمًا](docs/MASTER_PLAN_AR.html). هذا ملف HTML كامل يمكن تنزيله وفتحه في المتصفح، ويحتوي الشعار والخطة والتكامل ومراجع البحث.
+3. اقرأ [القرارات الملزمة وحالة التنفيذ](docs/PROJECT_STATUS_AR.md). الخطة وثيقة أهداف؛ وجود ميزة فيها لا يعني أنها منفذة.
 
-Run on Node 24:
+## المبادئ الملزمة
 
-```sh
-npm test
-```
+- **العربية اللغة الأساسية والافتراضية**؛ الإنجليزية لغة ثانية مع تبديل RTL/LTR. واجهة البرنامج ورسائل الأخطاء والتقارير والقوالب والبوابات والتطبيقات تدعم اللغتين. محتوى المرضى المدخل يدويًا يبقى بلغته الأصلية.
+- ملف مريض موحد للحالات الجديدة والقديمة، مرتبط بالتخصصات والخطط والزيارات والإجراءات والمواعيد والحسابات.
+- فواتير واتفاقات بأي من YER / SAR / USD، وسداد بعملة أخرى مع حفظ السعر واتجاه التحويل والمبلغين؛ لا جمع للعملات كأنها عملة واحدة.
+- الحالة السابقة تسجل الاتفاق والمدفوع والعمل المنجز والمتبقي مع مصدر الإثبات؛ لا إيصال وهمي ولا إعادة احتساب المال القديم كدخل اليوم.
+- صلاحيات خادمية قابلة للضبط وعزل فروع وسجل تدقيق، دون إعدادات تسمح بإلغاء سلامة البيانات.
+- الموقع والبوابات والتطبيقات وشاشة الصالة والرسائل تستند إلى خدمات وبيانات مشتركة.
+- الاستضافة المستهدفة: **Railway** للواجهة والخلفية وقاعدة PostgreSQL.
 
-No external dependencies. Ten tests cover old orthodontic balances, uncertain data, historic patient credit, exchange direction, rounding and invalid values. Database transactions, authorization and durable idempotency remain to be implemented and tested.
+## ما تم فعليًا
 
-See [implementation scope and roadmap](docs/IMPLEMENTATION.md). Existing Mini and Dental repositories are references and have not been modified by this project.
+أنشئ المستودع. أول نواة حسابية مع 10 اختبارات ناجحة محليًا موجودة في [PR #1](https://github.com/Aqlanf10/aqlan-center-pro/pull/1). قاعدة البيانات والخادم والواجهة والاختبارات الإضافية قيد العمل والمراجعة. **لا توجد نسخة سريرية جاهزة أو نشر إنتاجي معتمد حتى الآن.**
+
+تحديث هذه الحالة ومصفوفة المتطلبات مطلوب مع كل دمج. لا تُستخدم بيانات مرضى حقيقية في اختبارات التطوير.
+
