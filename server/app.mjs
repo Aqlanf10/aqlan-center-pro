@@ -5,6 +5,7 @@ import { resolve, extname } from 'node:path';
 import { hashPassword, verifyPassword } from './password.mjs';
 import { readPatientHistory, reviewPatientHistory } from './patient-history.mjs';
 import { accountSecurity } from './account-security.mjs';
+import { appointmentsApi } from './appointments.mjs';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const hash = token => createHash('sha256').update(token).digest('hex');
 function fail(status, code) { throw Object.assign(new Error(code), { status }); }
@@ -21,6 +22,7 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
   const cookieName = production ? '__Host-aqlan_session' : 'aqlan_session';
   const failures = new Map();
   const account = accountSecurity({db,now});
+  const appointments = appointmentsApi({db,now});
   const dummy = hashPassword(randomBytes(32).toString('hex'));
   const cookie = (value, age) => `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${production ? '; Secure' : ''}`;
   async function permission(actor, branch, code) { await db.query('SELECT clinic.require_permission($1,$2,$3)', [actor,branch,code]); }
@@ -40,7 +42,7 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
       const url = new URL(req.url,origin), path = url.pathname;
       if (req.method === 'GET' && path === '/health/live') return send(200,{live:true});
       if (req.method === 'GET' && path === '/health/ready') {
-        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<7) throw new Error(); return send(200,{ready:true}); }
+        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<8) throw new Error(); return send(200,{ready:true}); }
         catch { return send(503,{ready:false}); }
       }
       if (!path.startsWith('/api/')) {
@@ -74,6 +76,14 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
         for (const key of keys) { const state=failures.get(key); if(state) { state.count--; if(state.count<=0) failures.delete(key); } }
         res.setHeader('Set-Cookie',cookie(token,28800)); return send(200,{ok:true});
       }
+      // Public lounge and public appointment request: no staff session. The
+      // lounge device holds no doctor or manager session by design (LOUNGE-02).
+      if (path.startsWith('/api/public/')) {
+        const loungeRoute=req.method==='GET'&&path.match(/^\/api\/public\/lounge\/([^/]+)$/);
+        if (loungeRoute) return send(200,await appointments.publicLounge(decodeURIComponent(loungeRoute[1]),url.searchParams.get('since')));
+        if (req.method==='POST'&&path==='/api/public/appointment-request') return send(200,await appointments.createRequest(await body(req),req.socket.remoteAddress));
+        fail(404,'NOT_FOUND');
+      }
       const token=(req.headers.cookie||'').split(';').map(v=>v.trim()).find(v=>v.startsWith(`${cookieName}=`))?.slice(cookieName.length+1);
       if (!token || !/^[a-f0-9]{64}$/.test(token)) fail(401,'AUTH_REQUIRED');
       const session=await db.query('SELECT s.id,s.display_name,a.username,t.id AS session_id FROM clinic.session t JOIN clinic.staff s ON s.id=t.staff_id JOIN clinic.login_account a ON a.staff_id=s.id WHERE t.token_hash=$1 AND t.expires_at>now() AND s.active AND t.credential_version=a.credential_version',[hash(token)]);
@@ -98,6 +108,17 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
         const r=await db.query('SELECT b.id,b.name,b.timezone,array_agg(DISTINCT rp.permission) AS permissions FROM clinic.branch b JOIN clinic.membership m ON m.branch_id=b.id JOIN clinic.role_permission rp ON rp.role_id=m.role_id WHERE m.staff_id=$1 AND b.active GROUP BY b.id ORDER BY b.name',[user.id]); return send(200,{branches:r.rows});
       }
       if (path==='/api/specialties' && req.method==='GET') return send(200,{specialties:(await db.query('SELECT code,name_ar FROM clinic.specialty ORDER BY code')).rows});
+      const scheduleRoute=path.match(/^\/api\/branches\/([^/]+)\/(appointments|arrivals|appointment-requests|schedule-config)$/);
+      if (scheduleRoute) {
+        if (req.method!=='GET') fail(405,'METHOD_NOT_ALLOWED');
+        const [,scheduleBranch,scheduleKind]=scheduleRoute;
+        if (!UUID.test(scheduleBranch)) fail(404,'NOT_FOUND');
+        await permission(user.id,scheduleBranch,'appointment.write');
+        if (scheduleKind==='appointments') return send(200,await appointments.listAppointments(user.id,scheduleBranch,url.searchParams.get('date')));
+        if (scheduleKind==='arrivals') return send(200,await appointments.listArrivals(user.id,scheduleBranch,url.searchParams.get('date')));
+        if (scheduleKind==='appointment-requests') return send(200,await appointments.listRequests(user.id,scheduleBranch,url.searchParams.get('status')));
+        return send(200,await appointments.scheduleConfig(user.id,scheduleBranch));
+      }
       const historyRoute=path.match(/^\/api\/branches\/([^/]+)\/patients\/([^/]+)\/history$/);
       if(historyRoute) {
         const [,branchId,patientId]=historyRoute;

@@ -1,0 +1,27 @@
+/* Copyright (c) 2026 Dr. Aqlan Alkamel. All rights reserved. */
+.lounge-body{background:var(--navy);color:#eef4fb;min-height:100vh}
+.lounge{min-height:100vh;display:flex;flex-direction:column;padding:28px clamp(16px,4vw,64px);gap:22px;max-width:1500px;margin:auto}
+.lounge-setup{margin:auto;max-width:640px}
+.lounge-offline{background:#873333;color:#fff;border-radius:10px;padding:14px 20px;text-align:center;font-size:16px;font-weight:bold}
+.lounge-head{display:flex;justify-content:space-between;align-items:center;gap:20px}
+.lounge-brand strong{font-size:clamp(22px,3vw,34px);display:block}
+.lounge-brand small{color:#a9bccf;font-size:13px}
+.lounge-clock{text-align:center;background:#244667;border-radius:14px;padding:12px 26px;min-width:120px}
+.lounge-clock strong{font-size:clamp(26px,3.4vw,40px);display:block;letter-spacing:1px}
+.lounge-clock small{color:#c0ccdb;font-size:12px}
+.lounge-call{background:#fff;color:var(--navy);border-radius:22px;padding:clamp(24px,4vw,52px);display:grid;grid-template-columns:auto 1fr;gap:8px 34px;align-items:center;box-shadow:0 18px 60px #0a1e3340;animation:lounge-in .45s ease}
+.lounge-call-number{grid-row:span 3;text-align:center;background:var(--orange);color:#172d42;border-radius:18px;padding:14px 30px}
+.lounge-call-number .lounge-label{display:block;font-size:15px;font-weight:bold}
+.lounge-call-number strong{font-size:clamp(64px,10vw,120px);line-height:1.05}
+.lounge-call-name{font-size:clamp(30px,4.6vw,54px);font-weight:bold;line-height:1.4}
+.lounge-call-chair{font-size:clamp(20px,3vw,34px);color:#835a2b}
+.lounge-call-meta{font-size:15px;color:#667c90}
+.lounge-idle{margin:auto;text-align:center;color:#c9d7e4;padding:40px 10px}
+.lounge-idle p{font-size:clamp(20px,3vw,32px);margin-bottom:10px}
+.lounge-idle small{font-size:14px;color:#93aac3}
+.lounge-foot{margin-top:auto;display:flex;justify-content:space-between;align-items:center;gap:18px;border-top:1px solid #38526c;padding-top:16px;font-size:14px;color:#becddd;flex-wrap:wrap}
+.lounge-waiting strong{color:#fff;font-size:22px;margin-inline-start:6px}
+.lounge-recent{display:flex;gap:14px;flex-wrap:wrap}
+.lounge-recent span{background:#244667;border-radius:20px;padding:6px 14px;font-size:13px}
+@keyframes lounge-in{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}
+@media(max-width:720px){.lounge-call{grid-template-columns:1fr}.lounge-call-number{grid-row:auto;justify-self:center}.lounge-foot{justify-content:center;text-align:center}}
