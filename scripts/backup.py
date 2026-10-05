@@ -42,6 +42,18 @@ def manifest(env, snapshot=None):
           FROM clinic.patient_history_revision r
           ORDER BY r.patient_id,r.branch_id,r.version,r.id;""", snapshot)
         history['sha256'] = hashlib.sha256(content.encode('utf-8')).hexdigest()
+    auth_present = query(env, "SELECT to_regclass('clinic.auth_audit') IS NOT NULL;", snapshot) == 't'
+    if max(versions or [0]) >= 7 and not auth_present:
+        raise RuntimeError('Account-security schema version is present but its audit table is missing.')
+    auth_audit = {'present': auth_present}
+    if auth_present:
+        counts['auth_audit'] = int(query(env, 'SELECT count(*) FROM clinic.auth_audit;', snapshot))
+        # This fixed-schema audit contains identifiers/actions/counts, no credential
+        # hashes or tokens. Do not include login_account/session rows in this manifest.
+        content = query(env, """SELECT (to_jsonb(a) || jsonb_build_object(
+            'created_at',to_char(a.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))::text
+          FROM clinic.auth_audit a ORDER BY a.id;""", snapshot)
+        auth_audit['sha256'] = hashlib.sha256(content.encode('utf-8')).hexdigest()
     balances = json.loads(query(env, """SELECT coalesce(json_agg(row_to_json(t) ORDER BY t.branch_id,t.account,t.currency),'[]')
       FROM (SELECT j.branch_id,l.account,l.currency,sum(l.debit)::text AS debit,sum(l.credit)::text AS credit,
        sum(l.debit-l.credit)::text AS balance FROM clinic.journal_line l JOIN clinic.journal j ON j.id=l.journal_id
@@ -55,7 +67,7 @@ def manifest(env, snapshot=None):
         settings = json.loads(query(env, "SELECT row_to_json(s) FROM (SELECT increment_by::text,min_value::text,max_value::text,cycle FROM pg_sequences WHERE schemaname='clinic' AND sequencename='" + name.replace("'", "''") + "') s;", snapshot))
         sequences[name] = dict(state, **settings)
     return {'counts': counts, 'schemaVersions': versions, 'balances': balances,
-            'sequences': sequences, 'patientHistory': history}
+            'sequences': sequences, 'patientHistory': history, 'authAudit': auth_audit}
 
 
 def backup(url, destination):

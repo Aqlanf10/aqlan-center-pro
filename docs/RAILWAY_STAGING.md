@@ -7,9 +7,9 @@ Use synthetic patients only. Record the exact Git SHA and CI run before deployme
 
 ## Provisioning record — 2026-10-05, Asia/Aden
 
-The new project's private database has been provisioned. Empty `migrate` and `web`
-services are configured without a source, public domain or deployment. No application or
-migration service has been deployed and no real patient records have been loaded.
+The new project's private database, migration operator and web foundation have
+been deployed from the exact Git archive identified below. The account and branch
+are synthetic staging fixtures; no real patient records have been loaded.
 The existing projects listed above were not modified.
 
 | Resource | Verified value |
@@ -21,21 +21,69 @@ The existing projects listed above were not modified.
 | Database image | `ghcr.io/railwayapp-templates/postgres-ssl:17` |
 | Successful database deployment | `468c213e-5772-454b-84de-0f8a153de7bc` |
 | Actual server version | `17.11 (Debian 17.11-1.pgdg13+2)`, verified via SSH `psql SHOW server_version` |
-| Empty migration service | `20693ac2-43a4-450f-9715-ca87bbf326be` |
-| Empty web service | `e1d67655-9625-45c8-86ae-a970cb4c11b0` |
+| Migration service | `20693ac2-43a4-450f-9715-ca87bbf326be` |
+| Web service | `e1d67655-9625-45c8-86ae-a970cb4c11b0` |
+| Deployed Git archive | `519cf5ffdbfb1addd7df858cb1df74d02243de89` (merged patient-history release, migrations 1–6) |
+| Initial migrations | `28231c24-68e8-4c5d-91d6-3df921a2d42b`, successful one-shot |
+| Synthetic administrator bootstrap | `46524367-0a32-4f16-bcc4-635c974e5903`, log confirms creation |
+| Prior TLS release migration replay | `37796519-168d-4107-b88a-a8cf170c89ab`, successful one-shot, stopped |
+| Migration 006 upgrade | `dda663fc-024f-4716-ae33-7f63ee7a7bd2`, successful one-shot, stopped |
+| Web deployment | `d3ea0014-a434-4467-aa6d-01afe3c17a2b`, successful and running |
+| HTTPS staging URL | [web-staging-1ff1.up.railway.app](https://web-staging-1ff1.up.railway.app) |
 
 Generated database credentials were written directly to Railway through stdin;
 they are not stored in this repository. The runtime secret is independent of the
 administrator password; an in-memory check verified the web URL resolves to
 `aqlan_runtime` and only the migration URL resolves to `postgres`. No public database endpoint was created.
-The actual runtime database login, schema migrations, bootstrap account and application's external
-HTTPS path still require the operator sequence below after the final CI gate.
+The restricted `aqlan_runtime` login was provisioned after migration 005. The
+synthetic operator username is `staging.owner`; its generated password exists only
+in the migration service's `STAGING_ADMIN_PASSWORD` secret. The bootstrap fed that
+secret through stdin and the migration service's normal start command was restored.
+Neither application image nor repository contains these passwords. GitHub
+autodeploy remains disconnected; uploads use the reviewed exact Git archive.
 
 Database SSL is enabled. The server certificate includes
 `postgresql17.railway.internal` in its Subject Alternative Names; its public root
 CA was copied into both services' `DATABASE_CA_CERT` without exporting any private
 key. Root CA SHA-256: `3f573e60152a160db511c3aa4b716ff00029c7a97f57be2e2b2ba0c286e68a2d`.
-Actual driver certificate verification remains a deployment check.
+Live libpq verification with that CA and `verify-full` succeeded using TLS 1.3;
+wrong-hostname and untrusted-root attempts were rejected. Actual runtime login
+checks confirmed command/session privileges while rejecting command-owner role
+assumption, schema DDL and direct clinical DML. The running Node application's
+managed CA connection also passes its readiness probe.
+
+HTTPS requests using normal client certificate verification returned 200 for `/`,
+`/health/live` and `/health/ready`, and 401 for anonymous `/api/me`. These checks
+prove bounded foundation availability, not completed clinic workflows or clinical
+production approval. On the preceding TLS release `cac4c051`, authenticated Chrome
+checks passed Arabic/English desktop/mobile login, one clearly synthetic patient
+creation and reload persistence, logout/401, and no console errors or horizontal
+overflow. This bounded check did not exercise financial workflows.
+
+Before upgrading to migration 006, a read-only native dump of the stable staging
+database was restored into `aqlan_stage_cac4c051_test`. The exact `cac4c051` operator
+image then ran `scripts/restore-test.py` into the separate
+`aqlan_stage_cac4c051_restore_test` database. Deployment
+`9fde84d0-e792-43fa-81bb-accb47903511` passed backup checksum, restore, row counts,
+schema versions, per-currency ledger and next sequence checks. Independent sorted
+row SHA-256 fingerprints and counts matched across all 22 clinic/public tables in
+the original, disposable source and restored database. Original staging remained
+unchanged; temporary dump files were removed. The two disposable databases remain
+available for inspection. This verifies database restoration, not attachment or
+offsite backup recovery; no separate restored application was started.
+
+After restore success, merged PR #5 archive `519cf5ff` was uploaded to the operator
+and then web. Its reviewed head `30f9ba7` passed CI run `37245064431`. Live schema
+versions are exactly 1–6 and the original synthetic patient remains. Actual runtime
+login permission boundaries and wrong-hostname/untrusted-CA rejection passed again
+after the upgrade. No migration 007 was included. The migration operator's normal
+start command is again `python3 scripts/migrate.py`.
+
+Operational detail: redeploying an existing Railway deployment preserves that
+deployment's start command. To apply a changed operator command, upload the same
+verified archive again. Deployment `303eb432-9c4c-4308-9109-822fd5d9769c` consequently
+proved migration replay, not bootstrap; only the bootstrap ID above counts as
+account-creation evidence.
 
 Local canonical-LF rehearsal on exact Git archive
 `cea050d16ffa88e5c8df265f3f8fb05a2e1c446b` passed against a fresh PostgreSQL 17.11

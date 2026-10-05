@@ -16,8 +16,10 @@ test('runtime role can execute authorized commands but cannot bypass command bou
   await db.query("INSERT INTO clinic.login_account VALUES($1,'owner','test-hash',now())",[staff]);
   await db.exec('CREATE ROLE test_app LOGIN INHERIT; GRANT clinic_runtime TO test_app; SET SESSION AUTHORIZATION test_app');
   assert.equal((await db.query('SELECT username FROM clinic.login_account')).rows[0].username,'owner');
-  await db.query("INSERT INTO clinic.session(token_hash,staff_id,expires_at) VALUES($1,$2,now()+interval '1 hour')",['a'.repeat(64),staff]);
-  await db.query('DELETE FROM clinic.session WHERE staff_id=$1',[staff]);
+  const session=(await db.query('SELECT clinic.issue_session($1,1,$2) AS result',[staff,'a'.repeat(64)])).rows[0].result;
+  await db.query('SELECT clinic.revoke_account_session($1,$2,$3)',[staff,'a'.repeat(64),session.id]);
+  await assert.rejects(db.query("INSERT INTO clinic.session(token_hash,staff_id,expires_at) VALUES($1,$2,now()+interval '1 hour')",['b'.repeat(64),staff]));
+  await assert.rejects(db.query('DELETE FROM clinic.session WHERE staff_id=$1',[staff]));
   const patient=(await db.query("SELECT clinic.execute($1,$2,'11111111-1111-4111-8111-111111111111','patient.create',$3::jsonb) AS result",[staff,branch,JSON.stringify({fullName:'Real patient'})])).rows[0].result;
   assert.ok(patient.id);
   const command=async(name,payload)=>(await db.query('SELECT clinic.execute($1,$2,$3,$4,$5::jsonb) AS result',[staff,branch,randomUUID(),name,JSON.stringify(payload)])).rows[0].result;

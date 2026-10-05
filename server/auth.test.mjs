@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile,readdir } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { createApp } from './app.mjs';
 import { hashPassword,verifyPassword } from './password.mjs';
@@ -13,7 +13,7 @@ test('password verifier uses salted scrypt and rejects bad passwords',async()=>{
 });
 test('HTTP authorization, CSRF, inactive account and expiring sessions',async()=>{
  const db=new PGlite();
- for(const file of ['001_core.sql','002_commands.sql','003_auth.sql']) await db.exec(await readFile(new URL(`../db/${file}`,import.meta.url),'utf8'));
+ for(const file of (await readdir(new URL('../db/',import.meta.url))).filter(f=>/^\d+.*\.sql$/.test(f)).sort()) await db.exec(await readFile(new URL(`../db/${file}`,import.meta.url),'utf8'));
  const staff=(await db.query("INSERT INTO clinic.staff(display_name) VALUES('Test owner') RETURNING id")).rows[0].id;
  await db.query('INSERT INTO clinic.login_account(staff_id,username,password_hash) VALUES($1,$2,$3)',[staff,'test-admin',await hashPassword('test-password-123')]);
  const server=createApp({db,origin:'http://localhost:3000'});
