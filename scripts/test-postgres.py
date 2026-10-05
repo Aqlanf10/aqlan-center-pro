@@ -232,3 +232,29 @@ assert json.loads(output) == {'revokedCount': 1}
 assert security_state(staff) == {'version': 1, 'sessions': 1, 'changes': 0}
 assert sql(f"SELECT count(*) FROM clinic.session WHERE staff_id='{staff}' AND token_hash='{current}';") == '1'
 print('PASS: revoke-others removes a concurrent earlier login while retaining the current session')
+
+# BOOK-01: two concurrent overlapping bookings for the same chair — the
+# advisory schedule lock serializes them, so exactly one booking wins.
+chair = json.loads(sql(command('chair.create', {'name': 'Concurrency chair', 'room': 'R1'})))['id']
+doctor2 = str(uuid4())
+sql(f"INSERT INTO clinic.staff(id,display_name) VALUES('{doctor2}','Concurrent doctor'); INSERT INTO clinic.membership VALUES('{doctor2}','{branch}','{role}');")
+slot_date = sql("SELECT (now() AT TIME ZONE 'Asia/Aden')::date + 10;")
+p2 = json.loads(sql(command('patient.create', {'fullName': 'Concurrent Two'})))['id']
+p3 = json.loads(sql(command('patient.create', {'fullName': 'Concurrent Three'})))['id']
+first_booking = command('appointment.book', {'patientId': p2, 'doctorId': actor, 'chairId': chair, 'specialty': 'general', 'date': slot_date, 'minute': '600', 'duration': '30'})
+second_booking = command('appointment.book', {'patientId': p3, 'doctorId': doctor2, 'chairId': chair, 'specialty': 'general', 'date': slot_date, 'minute': '615', 'duration': '30'})
+code, _, error = race(first_booking, second_booking)
+assert code != 0 and 'TIME_CONFLICT' in error, error
+assert sql(f"SELECT count(*) FROM clinic.appointment WHERE branch_id='{branch}' AND status='booked';") == '1'
+print('PASS: concurrent overlapping bookings cannot double-book a chair')
+
+# BOOK-01: a public request booked concurrently with a direct booking for the
+# same slot follows the same lock, so the request booking loses cleanly.
+request_id = sql(f"SELECT clinic.submit_appointment_request('{branch}','Request Patient','777555000','general',{literal(slot_date)}::date,'');")
+request_booking = command('appointment.book', {'patientId': p2, 'doctorId': actor, 'chairId': chair, 'specialty': 'general', 'date': slot_date, 'minute': '700', 'duration': '30', 'requestId': request_id})
+direct_booking = command('appointment.book', {'patientId': p2, 'doctorId': actor, 'chairId': chair, 'specialty': 'general', 'date': slot_date, 'minute': '700', 'duration': '30'})
+code, output, error = race(direct_booking, request_booking)
+assert code != 0 and 'TIME_CONFLICT' in error, error
+status = sql(f"SELECT status FROM clinic.appointment_request WHERE id='{request_id}';")
+assert status == 'pending', status
+print('PASS: a request booked against a taken slot loses atomically and stays reviewable')

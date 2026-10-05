@@ -133,9 +133,29 @@ try {
  await action('new-visit').click();
  assert.equal(await page.locator('[name="planId"] option').last().innerText(),'تقويم الأسنان','Clinical users do not receive agreement currency');
  await action('close-modal').click();
+ // Public lounge screen plus the appointments module (BOOK-01/FLOW-02/LOUNGE-01..03 journey).
+ // Runs before the account journey, which ends by removing the actor's membership.
+ const base='http://127.0.0.1:43187';
+ const loungePatient=await f.patient({fullName:'زائر صالة اختبار'});
+ const loungeChair=(await f.command('chair.create',{name:'كرسي تجربة',room:'غرفة 3'})).id;
+ const loungeDate=(await db.query("SELECT ((now() AT TIME ZONE 'Asia/Aden')::date+7)::text AS d")).rows[0].d;
+ await f.command('appointment.book',{patientId:loungePatient,doctorId:f.actor,chairId:loungeChair,specialty:'general',date:loungeDate,minute:'600',duration:'30'});
+ const loungeArrival=await f.command('arrival.create',{patientId:loungePatient});
+ await f.command('arrival.call',{arrivalId:loungeArrival.id});
+ const loungePage=await browser.newPage({viewport:{width:1280,height:800}});
+ await loungePage.goto(`${base}/lounge.html?b=${f.branch}`,{waitUntil:'load'});
+ await loungePage.locator('.lounge-call').waitFor();
+ assert.match(await loungePage.locator('.lounge-call-name').innerText(),/زائر ص\./);
+ assert.ok(!(await loungePage.content()).includes('زائر صالة اختبار'),'The lounge screen must render the masked name only');
+ assert.ok(!(await loungePage.content()).includes(loungePatient),'The lounge screen must never render patient identifiers');
+ await loungePage.close();
+ await page.locator('[data-action="navigate"][data-id="appointments"]').first().click();
+ await page.locator('#appointments-panel table, #appointments-panel .empty').first().waitFor();
+ await page.locator('#schedule-date').fill(loungeDate);
+ await page.waitForFunction(()=>document.querySelector('#appointments-panel')?.innerText?.includes('زائر صالة اختبار'),'The appointment must appear in the reception schedule on its date');
  await accountSecurityJourney({page,browser,password,db,fixture:f,screenshot});
  assert.deepEqual(errors,[]);
- console.log(`PASS: real Chromium + HTTP + synthetic ${process.env.BROWSER_DATABASE_URL?'PostgreSQL':'PGlite'}: Arabic/English login, new plan, FDI step, signed visit without added debt, YER/SAR payment, legacy unknown rejection/review/activation, protected clinical text, mobile RTL/LTR. This is not Railway or production approval; restricted deployment credentials and concurrent operations have separate gates.`);
+ console.log(`PASS: real Chromium + HTTP + synthetic ${process.env.BROWSER_DATABASE_URL?'PostgreSQL':'PGlite'}: Arabic/English login, new plan, FDI step, signed visit without added debt, YER/SAR payment, legacy unknown rejection/review/activation, protected clinical text, mobile RTL/LTR, appointment booking with masked lounge display. This is not Railway or production approval; restricted deployment credentials and concurrent operations have separate gates.`);
 } finally {
  await browser?.close();
  if(app?.listening)await new Promise(ok=>app.close(ok));

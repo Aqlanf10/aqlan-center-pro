@@ -68,14 +68,14 @@ test('authenticated runtime HTTP: integrated new and legacy patient journeys wit
    assert.deepEqual(next.balances,[{currency:'SAR',balance:'900.00'}]);
    assert.equal(next.entries.length,2);
   });
-  await t.test('readiness rejects schema preceding account security',async()=>{
+  await t.test('readiness rejects schema preceding the latest migration',async()=>{
    assert.deepEqual(await get('/health/ready'),{ready:true});
    await db.exec('SET SESSION AUTHORIZATION postgres');
-   await db.exec('DELETE FROM clinic.schema_version WHERE version=7');
+   await db.exec('DELETE FROM clinic.schema_version WHERE version=8');
    await db.exec('SET SESSION AUTHORIZATION journey_runtime');
    assert.deepEqual(await get('/health/ready',cookie,503),{ready:false});
    await db.exec('SET SESSION AUTHORIZATION postgres');
-   await db.exec('INSERT INTO clinic.schema_version(version) VALUES(7)');
+   await db.exec('INSERT INTO clinic.schema_version(version) VALUES(8)');
    await db.exec('SET SESSION AUTHORIZATION journey_runtime');
   });
   await t.test('statement preserves exact cents in nested journal lines above Number precision',async()=>{
