@@ -110,10 +110,16 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
         const r=await db.query('SELECT b.id,b.name,b.timezone,array_agg(DISTINCT rp.permission) AS permissions FROM clinic.branch b JOIN clinic.membership m ON m.branch_id=b.id JOIN clinic.role_permission rp ON rp.role_id=m.role_id WHERE m.staff_id=$1 AND b.active GROUP BY b.id ORDER BY b.name',[user.id]); return send(200,{branches:r.rows});
       }
       if (path==='/api/specialties' && req.method==='GET') return send(200,{specialties:(await db.query('SELECT code,name_ar FROM clinic.specialty ORDER BY code')).rows});
-      const importRoute=path.match(/^\/api\/branches\/([^/]+)\/imports(?:\/([^/]+))?(?:\/(approve|cancel))?$/);
+      const importRoute=path.match(/^\/api\/branches\/([^/]+)\/imports(?:\/([^/]+))?(?:\/(approve|cancel|parse))?$/);
       if (importRoute) {
         const [,importBranch,importBatch,importAction]=importRoute;
-        if (!UUID.test(importBranch) || (importBatch&&!UUID.test(importBatch))) fail(404,'NOT_FOUND');
+        // `parse` is a collection-level verb: the greedy first group captures it.
+        const parseAction=importBatch==='parse'&&!importAction;
+        if (!UUID.test(importBranch) || (importBatch&&!parseAction&&!UUID.test(importBatch))) fail(404,'NOT_FOUND');
+        if (parseAction&&req.method==='POST') {
+          // Header/sample extraction for the mapping screen; nothing is stored.
+          return send(200,await imports.parse(user.id,importBranch,await body(req,6*1024*1024)));
+        }
         if (importAction==='approve'&&importBatch&&req.method==='POST') {
           const data=await body(req); return send(200,await imports.approve(user.id,importBranch,importBatch,data.decisions));
         }

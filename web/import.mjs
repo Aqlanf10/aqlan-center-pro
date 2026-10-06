@@ -53,6 +53,7 @@ async function api(path, body, rawBody) {
 }
 const base = () => `/api/branches/${state.branch.id}/imports`;
 
+const todayAden = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Aden' }).format(new Date());
 async function sha256(text) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -140,8 +141,9 @@ async function handleUpload(e) {
   $('#map-form').scrollIntoView({ behavior: 'smooth' });
 }
 
-function renderPreview(staged) {
-  const perCurrency = Object.entries(staged.summary.perCurrency).filter(([, b]) => b.rowCount);
+function renderPreview() {
+  // The stored per-currency summary persists the domain preview verbatim.
+  const perCurrency = Object.entries(state.batch.per_currency || {}).filter(([, b]) => b.rowCount);
   $('#detail-head').innerHTML = `<div class="page-head"><div><p class="eyebrow">معاينة الدفعة</p><h1>${esc(state.batch.file_name)}</h1><p class="muted">${esc({ desktop: 'المكتبي', mini: 'Mini', paper: 'ورقي' }[state.batch.source_system] || state.batch.source_system)} · كشف ${esc(state.batch.as_of_date)} · ${state.batch.row_count} صف</p></div><div class="actions">${state.batch.status === 'staged' ? `<button class="button primary" data-action="approve">اعتماد الصفوف الجاهزة (${state.batch.staged_rows})</button><button class="button" data-action="cancel-batch">إلغاء الدفعة</button>` : `<span class="chip ${state.batch.status === 'approved' ? 'done' : 'bad'}">${state.batch.status === 'approved' ? 'معتمدة بالكامل' : 'ملغاة'}</span>`}</div></div>
   <div class="grid stats">${perCurrency.map(([code, b]) => `<article class="card stat"><span class="stat-label">${code}</span><strong class="stat-value">${b.openingReceivable}</strong><small>ذمم افتتاحية · ${b.rowCount} صف${b.unknownFinanceCount ? ` · ${b.unknownFinanceCount} بمبالغ غير معروفة` : ''}${b.historicalCredit !== '0.00' ? ` · رصيد دائن ${b.historicalCredit}` : ''}</small></article>`).join('')}</div>`;
   const filters = ['', 'staged', 'needs_evidence', 'rejected', 'imported', 'failed'];
@@ -238,6 +240,10 @@ document.addEventListener('submit', async e => {
       });
       notify(`جهزت الدفعة: ${staged.summary.totalRows} صف (${staged.summary.rejectedRows} مرفوض).`);
       $('#wizard').hidden = true; $('#map-form').hidden = true; $('#upload-form').reset(); $('#map-form').reset();
+      // form.reset() clears the boot-filled statement date, which would silently
+      // block the next submission on HTML5 validation — restore it.
+      const dateInput = $('#upload-form').elements.asOfDate;
+      dateInput.max = todayAden(); dateInput.value = todayAden();
       state.offset = 0; state.rowStatus = '';
       await renderBatches();
       await openBatch(staged.batchId);
@@ -260,7 +266,6 @@ document.addEventListener('submit', async e => {
   state.branch = state.branches[0];
   renderShell(`<div id="intro"></div>${wizardHidden()}<div id="batches"></div><section class="card" id="batch-detail" hidden><div id="detail-head"></div><nav class="tabs" id="row-filters" aria-label="تصفية الحالة"></nav><div id="rows"></div></section>`);
   await Promise.all([renderBatches(), renderIntro()]);
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Aden' }).format(new Date());
   const dateInput = $('#upload-form').elements.asOfDate;
-  dateInput.max = today; dateInput.value = today;
+  dateInput.max = todayAden(); dateInput.value = todayAden();
 })().catch(err => { $('#main').className = 'import-page'; $('#main').innerHTML = `<section class="card"><h1>تعذر تحميل الشاشة</h1><p class="muted">${esc(errorText(err))}</p></section>`; });
