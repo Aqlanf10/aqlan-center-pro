@@ -6,13 +6,14 @@ import { hashPassword, verifyPassword } from './password.mjs';
 import { readPatientHistory, reviewPatientHistory } from './patient-history.mjs';
 import { accountSecurity } from './account-security.mjs';
 import { appointmentsApi } from './appointments.mjs';
+import { importApi } from './import.mjs';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const hash = token => createHash('sha256').update(token).digest('hex');
 function fail(status, code) { throw Object.assign(new Error(code), { status }); }
-async function body(req) {
+async function body(req, limit = 64 * 1024) {
   if (req.headers['content-type']?.split(';')[0] !== 'application/json') fail(415, 'JSON_REQUIRED');
   let size = 0; const chunks = [];
-  for await (const chunk of req) { size += chunk.length; if (size > 64 * 1024) fail(413, 'BODY_TOO_LARGE'); chunks.push(chunk); }
+  for await (const chunk of req) { size += chunk.length; if (size > limit) fail(413, 'BODY_TOO_LARGE'); chunks.push(chunk); }
   let data; try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { fail(400, 'INVALID_JSON'); }
   if (!data || Array.isArray(data) || typeof data !== 'object') fail(400, 'OBJECT_REQUIRED');
   return data;
@@ -23,6 +24,7 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
   const failures = new Map();
   const account = accountSecurity({db,now});
   const appointments = appointmentsApi({db,now});
+  const imports = importApi({db,now});
   const dummy = hashPassword(randomBytes(32).toString('hex'));
   const cookie = (value, age) => `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${production ? '; Secure' : ''}`;
   async function permission(actor, branch, code) { await db.query('SELECT clinic.require_permission($1,$2,$3)', [actor,branch,code]); }
@@ -42,7 +44,7 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
       const url = new URL(req.url,origin), path = url.pathname;
       if (req.method === 'GET' && path === '/health/live') return send(200,{live:true});
       if (req.method === 'GET' && path === '/health/ready') {
-        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<9) throw new Error(); return send(200,{ready:true}); }
+        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<10) throw new Error(); return send(200,{ready:true}); }
         catch { return send(503,{ready:false}); }
       }
       if (!path.startsWith('/api/')) {
@@ -108,6 +110,28 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
         const r=await db.query('SELECT b.id,b.name,b.timezone,array_agg(DISTINCT rp.permission) AS permissions FROM clinic.branch b JOIN clinic.membership m ON m.branch_id=b.id JOIN clinic.role_permission rp ON rp.role_id=m.role_id WHERE m.staff_id=$1 AND b.active GROUP BY b.id ORDER BY b.name',[user.id]); return send(200,{branches:r.rows});
       }
       if (path==='/api/specialties' && req.method==='GET') return send(200,{specialties:(await db.query('SELECT code,name_ar FROM clinic.specialty ORDER BY code')).rows});
+      const importRoute=path.match(/^\/api\/branches\/([^/]+)\/imports(?:\/([^/]+))?(?:\/(approve|cancel))?$/);
+      if (importRoute) {
+        const [,importBranch,importBatch,importAction]=importRoute;
+        if (!UUID.test(importBranch) || (importBatch&&!UUID.test(importBatch))) fail(404,'NOT_FOUND');
+        if (importAction==='approve'&&importBatch&&req.method==='POST') {
+          const data=await body(req); return send(200,await imports.approve(user.id,importBranch,importBatch,data.decisions));
+        }
+        if (importAction==='cancel'&&importBatch&&req.method==='POST') {
+          await body(req); return send(200,await imports.cancel(user.id,importBranch,importBatch));
+        }
+        if (!importBatch&&!importAction&&req.method==='POST') {
+          // The staged CSV lives inside the JSON body; 5MB file bound plus header maps.
+          return send(200,await imports.stage(user.id,importBranch,await body(req,6*1024*1024)));
+        }
+        if (!importBatch&&!importAction&&req.method==='GET') return send(200,await imports.list(user.id,importBranch));
+        if (importBatch&&!importAction&&req.method==='GET') {
+          const status=url.searchParams.get('status')??undefined;
+          const limit=Number(url.searchParams.get('limit')??200),offset=Number(url.searchParams.get('offset')??0);
+          return send(200,await imports.get(user.id,importBranch,importBatch,{status,limit,offset}));
+        }
+        fail(404,'NOT_FOUND');
+      }
       const scheduleRoute=path.match(/^\/api\/branches\/([^/]+)\/(appointments|arrivals|appointment-requests|schedule-config)$/);
       if (scheduleRoute) {
         if (req.method!=='GET') fail(405,'METHOD_NOT_ALLOWED');

@@ -1,0 +1,57 @@
+/* Copyright (c) 2026 Dr. Aqlan Alkamel. All rights reserved. */
+/* Legacy archive import screen — layered over the shared design system. */
+.import-page .sidebar label select { width: 100%; padding: .5rem .75rem; border: 1px solid var(--line, #d7dee8); border-radius: 8px; background: #fff; }
+.import-page .sidebar .brand { display: flex; flex-direction: column; gap: .15rem; margin-bottom: 1rem; }
+.import-page .sidebar .brand small { color: #5b6b7e; }
+.import-page .nav a { display: block; padding: .5rem .75rem; border-radius: 8px; text-decoration: none; color: #132f50; font-weight: 600; }
+.import-page .nav a:hover { background: #eef3f9; }
+
+.map-fields { display: grid; gap: .6rem; }
+.map-row { display: grid; grid-template-columns: minmax(220px, 1fr); }
+.map-row select { width: 100%; padding: .5rem .75rem; border: 1px solid #d7dee8; border-radius: 8px; }
+.map-row strong { display: block; margin-bottom: .25rem; font-size: .85rem; }
+
+.currency-map { display: grid; gap: .5rem; margin-bottom: .75rem; }
+.currency-row { display: grid; grid-template-columns: 2fr 120px auto; gap: .5rem; align-items: center; }
+.currency-row input, .currency-row select { padding: .5rem .75rem; border: 1px solid #d7dee8; border-radius: 8px; }
+
+.table-wrap { overflow-x: auto; }
+.table-wrap table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.table-wrap th, .table-wrap td { text-align: right; padding: .5rem .6rem; border-bottom: 1px solid #e7edf4; vertical-align: top; }
+.table-wrap thead th { background: #f4f7fb; color: #41536a; font-size: .8rem; }
+.table-wrap tr.current td { background: #f0f6ff; }
+
+.chip { display: inline-block; padding: .15rem .6rem; border-radius: 999px; font-size: .75rem; font-weight: 700; white-space: nowrap; }
+.chip.ok { background: #e5f5ec; color: #177245; }
+.chip.warn { background: #fdf3e0; color: #9a6a08; }
+.chip.bad { background: #fdeaea; color: #a13030; }
+.chip.done { background: #e8edf5; color: #41536a; }
+
+.issue { font-size: .78rem; margin-bottom: .2rem; }
+.issue.bad { color: #a13030; }
+.issue.warn { color: #9a6a08; }
+.issues { max-width: 260px; }
+
+.attach summary { cursor: pointer; font-size: .8rem; color: #16457c; }
+.attach-body { margin-top: .4rem; display: grid; gap: .4rem; }
+.attach-results { display: grid; gap: .3rem; }
+.attach-results .button { justify-self: start; }
+
+.searchbar { display: flex; gap: .4rem; }
+.searchbar input { flex: 1; padding: .45rem .7rem; border: 1px solid #d7dee8; border-radius: 8px; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: .3rem; margin: .75rem 0; }
+.tabs .tab { border: 1px solid #d7dee8; background: #fff; border-radius: 999px; padding: .3rem .9rem; cursor: pointer; font: inherit; }
+.tabs .tab.active { background: #132f50; color: #fff; border-color: #132f50; }
+
+.note { position: fixed; bottom: 1rem; inset-inline-start: 1rem; z-index: 60; padding: .6rem 1rem; border-radius: 10px; box-shadow: 0 8px 24px rgba(19, 47, 80, .18); font-size: .9rem; }
+.note.ok { background: #e5f5ec; color: #177245; }
+.note.bad { background: #fdeaea; color: #a13030; }
+
+.file-label { display: block; margin: .75rem 0; }
+.file-label input { margin-top: .35rem; }
+#upload-form .grid, #upload-form label { display: block; }
+#upload-form .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .6rem; margin-bottom: .5rem; }
+#upload-form select, #upload-form input { width: 100%; padding: .5rem .75rem; border: 1px solid #d7dee8; border-radius: 8px; margin-top: .25rem; }
+
+@media print { .sidebar, .topbar, .tabs, .actions, .note { display: none !important; } }
