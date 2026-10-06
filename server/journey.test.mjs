@@ -70,12 +70,13 @@ test('authenticated runtime HTTP: integrated new and legacy patient journeys wit
   });
   await t.test('readiness rejects schema preceding the latest migration',async()=>{
    assert.deepEqual(await get('/health/ready'),{ready:true});
+   const latest=(await db.query('SELECT max(version)::int AS v FROM clinic.schema_version')).rows[0].v;
    await db.exec('SET SESSION AUTHORIZATION postgres');
-   await db.exec('DELETE FROM clinic.schema_version WHERE version=8');
+   await db.exec(`DELETE FROM clinic.schema_version WHERE version=${latest}`);
    await db.exec('SET SESSION AUTHORIZATION journey_runtime');
    assert.deepEqual(await get('/health/ready',cookie,503),{ready:false});
    await db.exec('SET SESSION AUTHORIZATION postgres');
-   await db.exec('INSERT INTO clinic.schema_version(version) VALUES(8)');
+   await db.exec(`INSERT INTO clinic.schema_version(version) VALUES(${latest})`);
    await db.exec('SET SESSION AUTHORIZATION journey_runtime');
   });
   await t.test('statement preserves exact cents in nested journal lines above Number precision',async()=>{
