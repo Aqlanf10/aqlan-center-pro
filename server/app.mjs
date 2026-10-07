@@ -44,7 +44,7 @@ export function createApp({ db, origin, production = false, webRoot = resolve('w
       const url = new URL(req.url,origin), path = url.pathname;
       if (req.method === 'GET' && path === '/health/live') return send(200,{live:true});
       if (req.method === 'GET' && path === '/health/ready') {
-        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<10) throw new Error(); return send(200,{ready:true}); }
+        try { const r = await db.query('SELECT max(version) AS version FROM clinic.schema_version'); const version=Number(r.rows[0]?.version); if (!Number.isInteger(version) || version<11) throw new Error(); return send(200,{ready:true}); }
         catch { return send(503,{ready:false}); }
       }
       if (!path.startsWith('/api/')) {

@@ -27,7 +27,8 @@ const ERROR_NAMES = {
   COLUMN_LIMIT: 'الصف يتجاوز حد الأعمدة (64).', CELL_LIMIT: 'خلية تتجاوز طول النص المسموح.',
   INVALID_OPTIONS: 'إعدادات صريحة غير صحيحة.', EMPTY_FILE: 'الملف لا يحتوي صفوف بيانات.',
   INVALID_HEADERS: 'الأعمدة المحددة مفقودة أو مكررة أو ملتبسة.', NETWORK_ERROR: 'تعذر الاتصال بالخادم.',
-  BODY_TOO_LARGE: 'حجم الطلب يتجاوز الحد المسموح.',
+  BODY_TOO_LARGE: 'حجم الطلب يتجاوز الحد المسموح.', INVALID_WORKBOOK: 'الملف ليس مصنفا XLSX قابلا للقراءة.',
+  FILE_READ_FAILED: 'تعذرت قراءة الملف من الجهاز.',
 };
 const errorText = e => ERROR_NAMES[e?.code || e?.message] || 'حدث خطأ غير متوقع. حاول مرة أخرى.';
 
@@ -58,6 +59,17 @@ async function sha256(text) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
+async function sha256Bytes(buffer) {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function base64Of(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  return btoa(binary);
+}
 function readCSV(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -86,7 +98,7 @@ function wizardHidden() {
         <label>تاريخ كشف الافتتاحي<input type="date" name="asOfDate" required></label>
         <label>الفاصل<select name="delimiter"><option value=",">فاصلة ,</option><option value=";">فاصلة منقوطة ;</option><option value="\t">Tab</option></select></label>
       </div>
-      <label class="file-label">ملف CSV (بحد 5MB و10000 صف)<input type="file" name="file" accept=".csv,.txt,text/csv,text/plain" required></label>
+      <label class="file-label">ملف CSV أو XLSX (بحد 5MB و10000 صف)<input type="file" name="file" accept=".csv,.txt,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label>
       <button class="button primary" type="submit">قراءة العناوين والعينات ←</button>
     </form>
     <form id="map-form" hidden>
@@ -103,7 +115,7 @@ function wizardHidden() {
 function renderIntro() {
   const canWrite = state.branches.length > 0;
   $('#intro').innerHTML = `<div class="page-head"><div><p class="eyebrow">التهيئة المُرحَّلة</p><h1>استيراد الأرشيف</h1><p class="muted">${esc(state.branch?.name || '')} · معاينة واعتماد واستئناف وتقرير استثناء — دون تحريك أي مبلغ قبل الاعتماد.</p></div>${canWrite ? '<button class="button primary" data-action="open-wizard">+ استيراد دفعة جديدة</button>' : ''}</div>
-  <div class="banner">التسلسل: ارفع الملف → اربط الأعمدة بالعينات الفعلية → راجع الحكم لكل صف (جاهز/يحتاج إثباتا/مرفوض) → اعتمد. الملفات المرفوعة تُحجب ببصمتها، وهويات المصدر المعروفة تُرفض تلقائيا لمنع التكرار (MIG-04).</div>`;
+  <div class="banner">التسلسل: ارفع ملف CSV أو XLSX → اربط الأعمدة بالعينات الفعلية → راجع الحكم لكل صف (جاهز/يحتاج إثباتا/مرفوض) → اعتمد. الملفات المرفوعة تُحجب ببصمتها، وهويات المصدر المعروفة تُرفض تلقائيا لمنع التكرار (MIG-04)، ومرشحو الهوية (رقم الملف/الهاتف) يُعرضون للتأكيد دون دمج تلقائي (MIG-03).</div>`;
 }
 
 async function renderBatches() {
@@ -121,10 +133,21 @@ async function handleUpload(e) {
   const form = e.target;
   const file = form.elements.file.files[0];
   if (!file) return;
-  const csv = await readCSV(file);
-  if (csv.length > 5 * 1024 * 1024) return notify(ERROR_NAMES.FILE_LIMIT, true);
-  const parsed = await api(`${base()}/parse`, { csv, delimiter: form.elements.delimiter.value });
-  state.file = { name: file.name.slice(0, 200), hash: await sha256(csv), csv, delimiter: form.elements.delimiter.value };
+  const isXlsx = /\.xlsx$/i.test(file.name) || file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  let parsed, fileState;
+  if (isXlsx) {
+    const buffer = await file.arrayBuffer();
+    if (buffer.byteLength > 5 * 1024 * 1024) return notify(ERROR_NAMES.FILE_LIMIT, true);
+    const dataBase64 = base64Of(buffer);
+    parsed = await api(`${base()}/parse`, { format: 'xlsx', dataBase64 });
+    fileState = { name: file.name.slice(0, 200), hash: await sha256Bytes(buffer), format: 'xlsx', dataBase64 };
+  } else {
+    const csv = await readCSV(file);
+    if (csv.length > 5 * 1024 * 1024) return notify(ERROR_NAMES.FILE_LIMIT, true);
+    parsed = await api(`${base()}/parse`, { csv, delimiter: form.elements.delimiter.value });
+    fileState = { name: file.name.slice(0, 200), hash: await sha256(csv), format: 'csv', csv, delimiter: form.elements.delimiter.value };
+  }
+  state.file = fileState;
   state.parsed = parsed;
   $('#map-fields').innerHTML = Object.entries(FIELD_LABELS).map(([field, label]) => `
     <div class="map-row"><label><strong>${esc(label)}</strong><select data-field="${field}"><option value="">— لا ربط —</option>${parsed.headers.map((h, i) => `<option value="${i}">${esc(h)} — عينة: ${esc(parsed.samples[0]?.[i] ?? '')}</option>`).join('')}</select></label></div>`).join('');
@@ -156,6 +179,8 @@ function rowsTable() {
     const issues = [...(r.issues || [])].map(i => `<div class="issue ${i.severity === 'error' ? 'bad' : 'warn'}">${esc(i.messageAr)}</div>`);
     if (r.error_code) issues.push(`<div class="issue bad">${esc(ERROR_NAMES[r.error_code] || r.error_code)}</div>`);
     const attach = state.attach.get(r.id);
+    const candidates = (r.candidates || []).filter(c => c && c.patientId);
+    if (candidates.length && r.status === 'staged') issues.push(`<div class="attach-candidates">${candidates.map(c => `<button class="button small" data-action="choose-attach" data-id="${esc(r.id)}" data-pid="${esc(c.patientId)}" data-name="${esc(c.fullName || c.patientId)}">مرشح: ${esc(c.fullName || c.patientId)} (${c.matchedBy === 'phone' ? 'هاتف' : 'ملف'})</button>`).join('')}</div>`);
     return `<tr><td>${r.line}</td><td>${esc(r.full_name)}</td><td>${esc(r.data?.sourceRecordId || '')}</td><td>${esc(r.currency || '—')}</td><td>${esc(r.agreed ?? '؟')}</td><td>${esc(r.previously_paid ?? '؟')}</td><td><span class="chip ${STATUS_CLASS[r.status]}">${STATUS_NAMES[r.status]}</span></td><td class="issues">${issues.join('') || '—'}${r.status === 'staged' ? `<details class="attach"><summary>ربط بمريض قائم</summary><div class="attach-body" data-row="${esc(r.id)}">${attach ? `<p>سيُربط بـ: <b>${esc(attach.full_name)}</b> <button class="quiet" data-action="clear-attach" data-id="${esc(r.id)}">إلغاء الربط</button></p>` : `<div class="searchbar"><input maxlength="100" placeholder="ابحث بالاسم أو الهاتف…" data-search="${esc(r.id)}"><button class="button small" data-action="search-patient" data-id="${esc(r.id)}">بحث</button></div><div class="attach-results" data-results="${esc(r.id)}"></div>`}</div></details>` : ''}</td></tr>`;
   }).join('')}</tbody></table></div>
   ${state.rows.length === state.limit ? `<button class="button" data-action="more">عرض المزيد</button>` : ''}`;
@@ -234,9 +259,13 @@ document.addEventListener('submit', async e => {
         }
       }
       const fd = $('#upload-form').elements;
+      const filePayload = state.file.format === 'xlsx'
+        ? { format: 'xlsx', dataBase64: state.file.dataBase64 }
+        : { format: 'csv', csv: state.file.csv, delimiter: state.file.delimiter };
       const staged = await api(base(), {
-        sourceSystem: fd.sourceSystem.value, fileName: state.file.name, fileHash: state.file.hash, csv: state.file.csv,
-        delimiter: state.file.delimiter, headerMap, currencyMap, defaultSpecialty: fd.defaultSpecialty.value, asOfDate: fd.asOfDate.value,
+        sourceSystem: fd.sourceSystem.value, fileName: state.file.name, fileHash: state.file.hash,
+        headerMap, currencyMap, defaultSpecialty: fd.defaultSpecialty.value, asOfDate: fd.asOfDate.value,
+        ...filePayload,
       });
       notify(`جهزت الدفعة: ${staged.summary.totalRows} صف (${staged.summary.rejectedRows} مرفوض).`);
       $('#wizard').hidden = true; $('#map-form').hidden = true; $('#upload-form').reset(); $('#map-form').reset();

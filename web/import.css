@@ -55,3 +55,6 @@
 #upload-form select, #upload-form input { width: 100%; padding: .5rem .75rem; border: 1px solid #d7dee8; border-radius: 8px; margin-top: .25rem; }
 
 @media print { .sidebar, .topbar, .tabs, .actions, .note { display: none !important; } }
+
+.attach-candidates { display: flex; flex-wrap: wrap; gap: .3rem; }
+.attach-candidates .button { justify-self: start; background: #eef4fb; border-color: #c4d6ee; color: #16457c; }

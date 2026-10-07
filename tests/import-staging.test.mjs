@@ -9,6 +9,7 @@ import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { createDatabase, fixture } from './helpers/database.mjs';
 import { importApi } from '../server/import.mjs';
+import { buildXlsx } from './helpers/xlsx.mjs';
 
 let db, imports;
 before(async () => { db = await createDatabase(); imports = importApi({ db }); });
@@ -22,7 +23,7 @@ const stageInput = (csv, changes = {}) => ({
   sourceSystem: 'desktop', fileName: 'legacy.csv', fileHash: hash(csv), csv, delimiter: ',',
   headerMap: map, currencyMap: { سعودي: 'SAR' }, defaultSpecialty: 'orthodontics', asOfDate: '2025-12-31', ...changes,
 });
-const rowOf = async batchId => (await db.query('SELECT id,line,status,patient_id,plan_id,error_code,issues,currency,agreed::text AS agreed,previously_paid::text AS previously_paid,legacy_file_number,phone FROM clinic.import_row WHERE batch_id=$1 ORDER BY line', [batchId])).rows;
+const rowOf = async batchId => (await db.query('SELECT id,line,status,patient_id,plan_id,error_code,issues,candidates,currency,agreed::text AS agreed,previously_paid::text AS previously_paid,legacy_file_number,phone FROM clinic.import_row WHERE batch_id=$1 ORDER BY line', [batchId])).rows;
 const balance = async planId => (await db.query(
   `SELECT coalesce(sum(l.debit-l.credit),0)::text AS a FROM clinic.journal j JOIN clinic.journal_line l ON l.journal_id=j.id
    WHERE j.plan_id=$1 AND l.account='RECEIVABLE'`, [planId])).rows[0].a;
@@ -221,4 +222,107 @@ test('import routes are wired before the generic patient route', async () => {
     const wrongMethod = await fetch(`${base}/api/branches/${branch}/imports`, { method: 'DELETE', headers });
     assert.equal(wrongMethod.status, 405);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('import staging: candidate matching persists proposals and attachment reuses the patient (MIG-03)', async () => {
+  const f = await fixture(db);
+  const seed = await imports.stage(f.actor, f.branch, stageInput(csvOf([
+    '1,مريض مرجعي,SAR,1000,400,600,0500,777123456',
+  ]), { fileHash: hash('seed-batch') }));
+  await imports.approve(f.actor, f.branch, seed.batchId, [{ rowId: (await rowOf(seed.batchId))[0].id }]);
+  const seeded = await rowOf(seed.batchId);
+  const knownPatient = seeded[0].patient_id;
+  assert.ok(knownPatient);
+
+  // A second file with the same legacy file number and phone proposes the
+  // known patient; the proposal is persisted with name + signal, never merged.
+  const next = await imports.stage(f.actor, f.branch, stageInput(csvOf([
+    '2,مريض مرجعي,SAR,900,0,900,0500,777-123-456',
+    '3,غريب تماما,SAR,100,0,100,,',
+  ]), { fileHash: hash('second-batch') }));
+  const rows = await rowOf(next.batchId);
+  const candidateRow = rows[0];
+  assert.deepEqual(candidateRow.candidates, [{ patientId: knownPatient, fullName: 'مريض مرجعي', matchedBy: 'fileNumber' }]);
+  assert.deepEqual(rows[1].candidates, []);
+  const issueCodes = candidateRow.issues.map(x => x.code);
+  assert.ok(issueCodes.includes('IDENTITY_REVIEW'));
+  // Phone-only matches also propose, labeled as phone signal.
+  const phoneOnly = await imports.stage(f.actor, f.branch, stageInput(csvOf([
+    '4,مريض مرجعي,SAR,100,0,100,,777123456',
+  ]), { fileHash: hash('third-batch') }));
+  const phoneRow = (await rowOf(phoneOnly.batchId))[0];
+  assert.deepEqual(phoneRow.candidates, [{ patientId: knownPatient, fullName: 'مريض مرجعي', matchedBy: 'phone' }]);
+
+  // Approval with the proposed attachment reuses the patient: no new patient.
+  const before = Number((await db.query('SELECT count(*) AS n FROM clinic.patient')).rows[0].n);
+  const approved = await imports.approve(f.actor, f.branch, next.batchId, [
+    { rowId: candidateRow.id, attachPatientId: knownPatient },
+    { rowId: rows[1].id },
+  ]);
+  assert.equal(approved.imported, 2);
+  assert.equal(Number((await db.query('SELECT count(*) AS n FROM clinic.patient')).rows[0].n), before + 1);
+  const attached = (await rowOf(next.batchId))[0];
+  assert.equal(attached.patient_id, knownPatient);
+  const plans = await db.query('SELECT patient_id FROM clinic.plan WHERE id=$1', [attached.plan_id]);
+  assert.equal(plans.rows[0].patient_id, knownPatient);
+  // Wrong branch attachment still fails the row only.
+  const stray = await imports.stage(f.actor, f.branch, stageInput(csvOf([
+    '5,وصل خاطئ,SAR,50,0,50,,',
+  ]), { fileHash: hash('stray-batch') }));
+  const strayRow = (await rowOf(stray.batchId))[0];
+  const result = await imports.approve(f.actor, f.branch, stray.batchId, [{ rowId: strayRow.id, attachPatientId: f.otherBranch }]);
+  assert.equal(result.imported, 0);
+  assert.equal(result.failedRows[0].code, 'ATTACH_PATIENT_NOT_FOUND');
+});
+
+test('import staging: reordered and renamed files with identical sources stay blocked (MIG-04)', async () => {
+  const f = await fixture(db);
+  const original = csvOf(['1,مريض أول,SAR,100,0,100,0500,']);
+  const first = await imports.stage(f.actor, f.branch, stageInput(original));
+  await imports.approve(f.actor, f.branch, first.batchId, [{ rowId: (await rowOf(first.batchId))[0].id }]);
+  // Reordered columns + renamed file + extra padding row: different bytes, so
+  // the file hash passes, but the durable source identity (system+id+currency)
+  // is what blocks the event — exactly the MIG-04 key, not the fingerprint.
+  const reordered = csvOf(['1,مريض أول,SAR,100,0,100,0500,', 'pad,حشو محايد,SAR,1,0,1,,']);
+  const remapped = stageInput(reordered, { fileHash: hash('reordered'), fileName: 'نسخة-معاد-ترتيبها.csv',
+    headerMap: { sourceRecordId: 'sourceRecordId', fullName: 'fullName', currency: 'currency', agreed: 'agreed', previouslyPaid: 'previouslyPaid', remaining: 'remaining', fileNumber: 'fileNumber', phone: 'phone' } });
+  const staged = await imports.stage(f.actor, f.branch, remapped);
+  assert.equal(staged.summary.rejectedRows, 1);
+  const codes = (await rowOf(staged.batchId))[0].issues.map(x => x.code);
+  assert.ok(codes.includes('SOURCE_ALREADY_KNOWN'));
+  // Same record id under a different source system is a DIFFERENT identity.
+  const otherSystem = await imports.stage(f.actor, f.branch, stageInput(csvOf(['1,مريض أول,SAR,100,0,100,0500,']),
+    { sourceSystem: 'mini', fileHash: hash('mini-copy') }));
+  assert.equal(otherSystem.summary.rejectedRows, 0);
+});
+
+test('import staging: xlsx workbooks stage and approve end to end (MIG-01)', async () => {
+  const f = await fixture(db);
+  const workbook = buildXlsx([
+    ['sourceRecordId', 'fullName', 'currency', 'agreed', 'previouslyPaid', 'remaining', 'fileNumber', 'phone'],
+    ['X-1', 'مريض ورقة عمل', 'SAR', '1200', '200', '1000', '0600', '777555000'],
+    ['X-2', 'مريض ثان ورقة', 'SAR', '300', '50', '250', '', ''],
+  ]);
+  const dataBase64 = workbook.toString('base64');
+  const parsed = await imports.parse(f.actor, f.branch, { format: 'xlsx', dataBase64 });
+  assert.deepEqual(parsed.headers, ['sourceRecordId', 'fullName', 'currency', 'agreed', 'previouslyPaid', 'remaining', 'fileNumber', 'phone']);
+  assert.equal(parsed.format, 'xlsx');
+  const staged = await imports.stage(f.actor, f.branch, stageInput('', {
+    format: 'xlsx', dataBase64, fileHash: createHash('sha256').update(workbook).digest('hex'), fileName: 'legacy.xlsx' }));
+  assert.equal(staged.summary.totalRows, 2);
+  assert.equal(staged.summary.perCurrency.SAR.openingReceivable, '1250.00');
+  const rows = await rowOf(staged.batchId);
+  assert.deepEqual(rows.map(r => r.status), ['staged', 'staged']);
+  assert.equal(rows[0].agreed, '1200.00');
+  assert.equal(rows[0].legacy_file_number, '0600');
+  assert.equal(rows[0].phone, '777555000');
+  const approved = await imports.approve(f.actor, f.branch, staged.batchId, rows.map(r => ({ rowId: r.id })));
+  assert.equal(approved.imported, 2);
+  assert.equal(approved.batchStatus, 'approved');
+  // A second upload of the same workbook bytes is blocked by its file hash.
+  await assert.rejects(() => imports.stage(f.actor, f.branch, stageInput('', {
+    format: 'xlsx', dataBase64, fileHash: createHash('sha256').update(workbook).digest('hex'), fileName: 'legacy.xlsx' })), /FILE_ALREADY_KNOWN/);
+  // Corrupt workbooks surface the safe bilingual code, not a crash.
+  await assert.rejects(() => imports.parse(f.actor, f.branch, { format: 'xlsx', dataBase64: Buffer.from('junk').toString('base64') }), /INVALID_WORKBOOK/);
+  await assert.rejects(() => imports.parse(f.actor, f.branch, { format: 'xlsx', dataBase64: 'not base64!!!' }), /INVALID_STAGE_INPUT/);
 });
