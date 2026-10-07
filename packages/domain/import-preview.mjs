@@ -107,14 +107,26 @@ function normalizedAmount(raw, signed = false) {
   return decimal(minor(raw));
 }
 function signedMinor(value) { return value.startsWith('-') ? -minor(value.slice(1)) : minor(value); }
+// The bounded normalized phone form is what candidate matching compares; the
+// human-readable legacy string stays on the record untouched.
+export function normalizeImportPhone(phone) {
+  if (phone === null || phone === '') return null;
+  const trimmed = String(phone).replace(/[\s\-().]/g, '');
+  if (!trimmed || trimmed.length > 40) return null;
+  return trimmed;
+}
 
 /**
  * fileHash is a caller-supplied SHA-256 identity, NOT cryptographically verified here.
  * headerMap maps canonical field names to exact source headers; no fuzzy guessing.
+ * Input is either `csv` (+delimiter) parsed here, or pre-parsed `records`
+ * ({line,cells}) produced by parseImportXlsx — both flow through one row logic.
  * existingSources must include equivalent source identities discovered across Mini/desktop.
+ * identityCandidates propose human review only: exact legacy file numbers and
+ * normalized phone matches. Matching never merges identities or money.
  * A clear preview still requires explicit human approval and a separate atomic importer.
  */
-export function previewLegacyImport({ csv, fileHash, sourceSystem, headerMap, currencyMap = {},
+export function previewLegacyImport({ csv, records, fileHash, sourceSystem, headerMap, currencyMap = {},
   existingSources = [], existingFileHashes = [], identityCandidates = [], unknownTokens = ['', '?', 'غير معروف'],
   delimiter = ',', limits: requestedLimits = {} } = {}) {
   if (typeof fileHash !== 'string' || !/^[a-fA-F0-9]{64}$/.test(fileHash) ||
@@ -124,12 +136,32 @@ export function previewLegacyImport({ csv, fileHash, sourceSystem, headerMap, cu
       !Array.isArray(unknownTokens) || unknownTokens.some(x => typeof x !== 'string') ||
       !Array.isArray(existingSources) || !Array.isArray(existingFileHashes) || !Array.isArray(identityCandidates) ||
       existingSources.length > 100000 || existingFileHashes.length > 100000 || identityCandidates.length > 100000) fail('INVALID_OPTIONS');
+  const bounds = limits(requestedLimits);
   const allowedFields = Object.keys(IMPORT_HEADERS.en);
   if (Object.entries(headerMap).some(([field, header]) => !allowedFields.includes(field) || typeof header !== 'string' || !header.trim()) ||
       ['sourceRecordId', 'fullName', 'currency'].some(field => !headerMap[field])) fail('INVALID_HEADERS');
-  const records = parseImportCsv(csv, { delimiter, ...requestedLimits });
-  if (records.length < 2) fail('EMPTY_FILE');
-  const headers = records.shift().cells.map(x => x.trim());
+  let parsed;
+  const fromRecords = records !== undefined;
+  if (fromRecords) {
+    if (!Array.isArray(records) || records.length < 2) fail(records === null || typeof records !== 'object' ? 'INVALID_OPTIONS' : 'EMPTY_FILE');
+    if (records.length > bounds.maxRows + 1) fail('ROW_LIMIT');
+    parsed = records.map((record, index) => {
+      if (!record || typeof record !== 'object' || Array.isArray(record) || !Array.isArray(record.cells) ||
+          record.cells.length > bounds.maxColumns || record.cells.some(c => typeof c !== 'string' || c.length > bounds.maxCellLength)) fail('INVALID_OPTIONS');
+      return { line: Number.isSafeInteger(record.line) && record.line > 0 ? record.line : index + 1, cells: record.cells };
+    });
+  } else {
+    parsed = parseImportCsv(csv, { delimiter, ...requestedLimits });
+  }
+  if (parsed.length < 2) fail('EMPTY_FILE');
+  const headers = parsed.shift().cells.map(x => x.trim());
+  // XLSX writers omit trailing empty cells, so a short record is empty padding
+  // in Excel semantics, not a ragged row. CSV rows stay strict: a real width
+  // mismatch there remains a ROW_WIDTH verdict.
+  if (fromRecords) {
+    parsed = parsed.map(record => record.cells.length >= headers.length ? record
+      : { ...record, cells: [...record.cells, ...Array.from({ length: headers.length - record.cells.length }, () => '')] });
+  }
   const indices = {};
   for (const [field, header] of Object.entries(headerMap)) {
     const matches = headers.flatMap((value, index) => value === header.trim() ? [index] : []);
@@ -144,18 +176,30 @@ export function previewLegacyImport({ csv, fileHash, sourceSystem, headerMap, cu
         (ref.recordType !== undefined && typeof ref.recordType !== 'string')) fail('INVALID_OPTIONS');
     knownKeys.add(sourceKey({ ...ref, sourceSystem: ref.sourceSystem.trim(), sourceRecordId: ref.sourceRecordId.trim() }));
   }
-  const candidateMap = new Map();
+  // Candidate maps: exact legacy file numbers and normalized phone strings
+  // both propose the same human review decision; neither ever merges silently.
+  const candidateFiles = new Map();
+  const candidatePhones = new Map();
   for (const ref of identityCandidates) {
-    if (!ref || typeof ref.fileNumber !== 'string' || !ref.fileNumber || typeof ref.patientId !== 'string' || !ref.patientId) fail('INVALID_OPTIONS');
-    const ids = candidateMap.get(ref.fileNumber) ?? new Set();
-    ids.add(ref.patientId); candidateMap.set(ref.fileNumber, ids);
+    if (!ref || typeof ref.patientId !== 'string' || !ref.patientId) fail('INVALID_OPTIONS');
+    const fileNumber = typeof ref.fileNumber === 'string' ? ref.fileNumber : '';
+    const phone = typeof ref.phone === 'string' ? normalizeImportPhone(ref.phone) : null;
+    if (!fileNumber && !phone) fail('INVALID_OPTIONS');
+    if (fileNumber) {
+      const ids = candidateFiles.get(fileNumber) ?? new Set();
+      ids.add(ref.patientId); candidateFiles.set(fileNumber, ids);
+    }
+    if (phone) {
+      const ids = candidatePhones.get(phone) ?? new Set();
+      ids.add(ref.patientId); candidatePhones.set(phone, ids);
+    }
   }
   if (existingFileHashes.some(hash => typeof hash !== 'string' || !/^[a-fA-F0-9]{64}$/.test(hash))) fail('INVALID_OPTIONS');
   const normalizedHash = fileHash.toLowerCase();
   const repeatedFile = existingFileHashes.some(hash => hash.toLowerCase() === normalizedHash);
   const unknown = new Set(unknownTokens.map(x => x.trim())); unknown.add('');
   const seen = new Map();
-  const rows = records.map((record, index) => {
+  const rows = parsed.map((record, index) => {
     const issues = [];
     const value = field => indices[field] === undefined ? '' : (record.cells[indices[field]] ?? '').trim();
     if (record.cells.length !== headers.length) issues.push(issue('ROW_WIDTH'));
@@ -179,7 +223,11 @@ export function previewLegacyImport({ csv, fileHash, sourceSystem, headerMap, cu
       data.calculatedRemaining = signedDecimal(minor(data.agreed) - minor(data.previouslyPaid));
       if (data.suppliedRemaining !== null && data.suppliedRemaining !== data.calculatedRemaining) issues.push(issue('REMAINDER_CONFLICT', 'remaining'));
     }
-    const candidates = data.fileNumber ? [...(candidateMap.get(data.fileNumber) ?? [])] : [];
+    const rowPhone = normalizeImportPhone(data.phone);
+    const candidateIds = new Set();
+    if (data.fileNumber) for (const id of candidateFiles.get(data.fileNumber) ?? []) candidateIds.add(id);
+    if (rowPhone) for (const id of candidatePhones.get(rowPhone) ?? []) candidateIds.add(id);
+    const candidates = [...candidateIds];
     if (candidates.length) issues.push(issue('IDENTITY_REVIEW', 'fileNumber', 'warning'));
     const row = { rowNumber: index + 1, sourceLine: record.line, data, candidates, issues, status: 'review_required', canAutoMerge: false };
     if (data.sourceRecordId && data.currency) {

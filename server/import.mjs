@@ -5,7 +5,8 @@
 // commit through clinic.import_commit_rows. It never invents money or merges
 // identities: file numbers stay legacy references and attachment to an
 // existing patient is always an explicit operator decision.
-import { previewLegacyImport, parseImportCsv } from '../packages/domain/import-preview.mjs';
+import { previewLegacyImport, parseImportCsv, normalizeImportPhone } from '../packages/domain/import-preview.mjs';
+import { parseImportXlsx as parseWorkbook } from '../packages/domain/import-xlsx.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -41,19 +42,27 @@ export function importApi({ db, now = () => Date.now() }) {
     return 'staged';
   };
   // Authoritative header/sample extraction for the mapping screen: the client
-  // never parses the CSV itself, so quoting quirks cannot produce a wrong map.
+  // never parses the file itself, so client-side quirks cannot produce a wrong
+  // map. This is a pre-mapping verb: only the file payload is required — the
+  // full stage contract (names, hash, maps, statement date) applies to stage().
   async function parse(actor, branch, input) {
     await db.query('SELECT clinic.require_permission($1,$2,$3)', [actor, branch, 'patient.write']);
-    const { csv, delimiter } = parseInput(input);
+    if (!input || typeof input !== 'object' || Array.isArray(input)) FAIL(400, 'INVALID_STAGE_INPUT');
+    const format = input.format === undefined ? 'csv' : input.format;
+    if (format !== 'csv' && format !== 'xlsx') FAIL(400, 'INVALID_STAGE_INPUT');
+    const delimiter = input.delimiter === undefined ? ',' : input.delimiter;
+    const dataBase64 = typeof input.dataBase64 === 'string' ? input.dataBase64 : '';
+    if (format === 'csv' && !DELIMITERS.includes(delimiter)) FAIL(400, 'INVALID_STAGE_INPUT');
+    if (format === 'xlsx' && (!dataBase64 || dataBase64.length > 7 * 1024 * 1024)) FAIL(400, 'INVALID_STAGE_INPUT');
     try {
-      const records = parseImportCsv(csv, { delimiter });
+      const records = format === 'xlsx' ? parseWorkbook(decodeBase64(dataBase64)) : parseImportCsv(typeof input.csv === 'string' ? input.csv : '', { delimiter });
       if (records.length < 2) FAIL(400, 'EMPTY_FILE');
-      return { headers: records[0].cells.map(x => x.trim()), samples: records.slice(1, 4).map(r => r.cells) };
+      return { headers: records[0].cells.map(x => x.trim()), samples: records.slice(1, 4).map(r => r.cells), format };
     } catch (e) { throw errorFrom(e); }
   }
   async function stage(actor, branch, input) {
     await db.query('SELECT clinic.require_permission($1,$2,$3)', [actor, branch, 'patient.write']);
-    const { sourceSystem, fileName, fileHash, csv, delimiter, headerMap, currencyMap, defaultSpecialty, asOfDate } = parseInput(input);
+    const { format, sourceSystem, fileName, fileHash, csv, delimiter, dataBase64, headerMap, currencyMap, defaultSpecialty, asOfDate } = parseInput(input);
     if (!/^[a-z0-9_-]{1,50}$/.test(defaultSpecialty)) FAIL(400, 'INVALID_STAGE_INPUT');
     if (!DATE.test(asOfDate)) FAIL(400, 'INVALID_STAGE_INPUT');
     const specialty = await db.query('SELECT 1 FROM clinic.specialty WHERE code=$1', [defaultSpecialty]);
@@ -71,10 +80,43 @@ export function importApi({ db, now = () => Date.now() }) {
        WHERE b.branch_id=$1 AND b.status='staged' AND r.status IN ('staged','needs_evidence')`, [branch])).rows;
     const knownHashes = (await db.query(
       "SELECT file_hash FROM clinic.import_batch WHERE branch_id=$1 AND status<>'cancelled'", [branch])).rows.map(r => r.file_hash);
+    // Candidate proposals (MIG-03): exact legacy file numbers already imported
+    // into this branch, plus normalized phone matches. Both are advisory only;
+    // the operator attaches or creates per row during approval.
+    const candidateRefs = (await db.query(
+      `SELECT r.legacy_file_number AS "fileNumber",NULL::text AS phone,r.patient_id::text AS "patientId",p.full_name AS "fullName"
+         FROM clinic.import_row r
+         JOIN clinic.import_batch b ON b.id=r.batch_id
+         JOIN clinic.patient p ON p.id=r.patient_id
+        WHERE b.branch_id=$1 AND r.status='imported' AND r.legacy_file_number IS NOT NULL AND r.patient_id IS NOT NULL
+        UNION ALL
+       SELECT NULL::text,p.phone::text,p.id::text,p.full_name
+         FROM clinic.patient p
+         JOIN clinic.patient_branch pb ON pb.patient_id=p.id AND pb.branch_id=$1
+        WHERE p.phone IS NOT NULL
+        LIMIT 20000`, [branch])).rows;
+    const candidateNames = new Map();
+    const identityCandidates = [];
+    for (const ref of candidateRefs) {
+      // Phones that do not survive normalization (empty, overlong) carry no
+      // identity signal and must not reach the preview as empty proposals.
+      if (ref.fileNumber !== null && ref.fileNumber !== '') {
+        candidateNames.set(ref.patientId, ref.fullName);
+        identityCandidates.push({ fileNumber: ref.fileNumber, patientId: ref.patientId });
+      } else if (ref.phone !== null) {
+        const normalized = normalizeImportPhone(ref.phone);
+        if (normalized) {
+          candidateNames.set(ref.patientId, ref.fullName);
+          identityCandidates.push({ phone: normalized, patientId: ref.patientId });
+        }
+      }
+    }
     let preview;
     try {
-      preview = previewLegacyImport({ csv, fileHash, sourceSystem, headerMap, currencyMap,
-        delimiter, existingSources: knownSources, existingFileHashes: knownHashes });
+      preview = previewLegacyImport({ csv: format === 'xlsx' ? undefined : csv,
+        records: format === 'xlsx' ? parseWorkbook(decodeBase64(dataBase64)) : undefined,
+        fileHash, sourceSystem, headerMap, currencyMap, delimiter, existingSources: knownSources, existingFileHashes: knownHashes,
+        identityCandidates });
     } catch (e) { throw errorFrom(e); }
     // The identical bytes are already staged or approved in this branch: block
     // the re-upload outright instead of persisting a wholly rejected batch.
@@ -95,19 +137,22 @@ export function importApi({ db, now = () => Date.now() }) {
       data: preview.rows.map(r => JSON.stringify(r.data)), sourceRecordId: preview.rows.map(r => r.data.sourceRecordId),
       currency: preview.rows.map(r => r.data.currency), agreed: preview.rows.map(r => r.data.agreed),
       previouslyPaid: preview.rows.map(r => r.data.previouslyPaid), suppliedRemaining: preview.rows.map(r => r.data.suppliedRemaining),
-      fullName: preview.rows.map(r => r.data.fullName), phone: preview.rows.map(r => normalizePhone(r.data.phone)),
+      fullName: preview.rows.map(r => r.data.fullName), phone: preview.rows.map(r => normalizeImportPhone(r.data.phone)),
       fileNumber: preview.rows.map(r => r.data.fileNumber),
       issues: preview.rows.map(r => JSON.stringify(r.issues)),
+      candidates: preview.rows.map(r => JSON.stringify((r.candidates || []).map(id => ({
+        patientId: id, fullName: candidateNames.get(id) ?? null,
+        matchedBy: r.data.fileNumber ? 'fileNumber' : 'phone' })))),
     };
     await db.query(
       `INSERT INTO clinic.import_row(batch_id,line,status,data,source_record_id,currency,agreed,previously_paid,
-        supplied_remaining,full_name,phone,legacy_file_number,issues)
+        supplied_remaining,full_name,phone,legacy_file_number,issues,candidates)
        SELECT $1,x.line,x.status,x.data::jsonb,x.source_record_id,x.currency,x.agreed::numeric,x.previously_paid::numeric,
-        x.supplied_remaining::numeric,x.full_name,x.phone,x.file_number,x.issues::jsonb
-       FROM unnest($2::int[],$3::text[],$4::jsonb[],$5::text[],$6::text[],$7::text[],$8::text[],$9::text[],$10::text[],$11::text[],$12::text[],$13::jsonb[])
-       AS x(line,status,data,source_record_id,currency,agreed,previously_paid,supplied_remaining,full_name,phone,file_number,issues)`,
+        x.supplied_remaining::numeric,x.full_name,x.phone,x.file_number,x.issues::jsonb,x.candidates::jsonb
+       FROM unnest($2::int[],$3::text[],$4::jsonb[],$5::text[],$6::text[],$7::text[],$8::text[],$9::text[],$10::text[],$11::text[],$12::text[],$13::jsonb[],$14::jsonb[])
+       AS x(line,status,data,source_record_id,currency,agreed,previously_paid,supplied_remaining,full_name,phone,file_number,issues,candidates)`,
       [batchId, cols.line, cols.status, cols.data, cols.sourceRecordId, cols.currency, cols.agreed,
-        cols.previouslyPaid, cols.suppliedRemaining, cols.fullName, cols.phone, cols.fileNumber, cols.issues]);
+        cols.previouslyPaid, cols.suppliedRemaining, cols.fullName, cols.phone, cols.fileNumber, cols.issues, cols.candidates]);
     return { batchId, summary: preview.summary, repeatedFile: preview.repeatedFile };
   }
   async function list(actor, branch) {
@@ -128,7 +173,7 @@ export function importApi({ db, now = () => Date.now() }) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500 || !Number.isSafeInteger(offset) || offset < 0) FAIL(400, 'INVALID_STAGE_INPUT');
     const rows = (await db.query(
       `SELECT id,line,status,data,currency,agreed::text AS agreed,previously_paid::text AS previously_paid,
-        supplied_remaining::text AS supplied_remaining,full_name,phone,legacy_file_number,issues,
+        supplied_remaining::text AS supplied_remaining,full_name,phone,legacy_file_number,issues,candidates,
         patient_id,plan_id,error_code
        FROM clinic.import_row WHERE batch_id=$1 AND ($2::text IS NULL OR status=$2)
        ORDER BY line LIMIT $3 OFFSET $4`, [batchId, status ?? null, limit, offset])).rows;
@@ -203,11 +248,14 @@ export function importApi({ db, now = () => Date.now() }) {
   }
   function parseInput(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) FAIL(400, 'INVALID_STAGE_INPUT');
+    const format = input.format === undefined ? 'csv' : input.format;
+    if (format !== 'csv' && format !== 'xlsx') FAIL(400, 'INVALID_STAGE_INPUT');
     const sourceSystem = typeof input.sourceSystem === 'string' ? input.sourceSystem.trim() : '';
     const fileName = typeof input.fileName === 'string' ? input.fileName.trim() : '';
     const fileHash = typeof input.fileHash === 'string' ? input.fileHash.trim().toLowerCase() : '';
     const csv = typeof input.csv === 'string' ? input.csv : '';
     const delimiter = input.delimiter === undefined ? ',' : input.delimiter;
+    const dataBase64 = typeof input.dataBase64 === 'string' ? input.dataBase64 : '';
     const headerMap = input.headerMap;
     const currencyMap = input.currencyMap === undefined ? {} : input.currencyMap;
     const defaultSpecialty = typeof input.defaultSpecialty === 'string' ? input.defaultSpecialty : '';
@@ -215,17 +263,17 @@ export function importApi({ db, now = () => Date.now() }) {
     if (!sourceSystem || sourceSystem.length > 100) FAIL(400, 'INVALID_STAGE_INPUT');
     if (!fileName || fileName.length > 200) FAIL(400, 'INVALID_STAGE_INPUT');
     if (!SHA256.test(fileHash)) FAIL(400, 'INVALID_STAGE_INPUT');
-    if (!DELIMITERS.includes(delimiter)) FAIL(400, 'INVALID_STAGE_INPUT');
+    if (format === 'xlsx' ? dataBase64.length > 7 * 1024 * 1024 : !DELIMITERS.includes(delimiter)) FAIL(400, 'INVALID_STAGE_INPUT');
     if (!defaultSpecialty || !DATE.test(asOfDate)) FAIL(400, 'INVALID_STAGE_INPUT');
-    return { sourceSystem, fileName, fileHash, csv, delimiter, headerMap, currencyMap, defaultSpecialty, asOfDate };
+    return { format, sourceSystem, fileName, fileHash, csv, delimiter, dataBase64, headerMap, currencyMap, defaultSpecialty, asOfDate };
   }
-  // Legacy phone strings stay human-readable references; the bounded normalized
-  // form is only what the patient record will hold, and empty stays empty.
-  function normalizePhone(phone) {
-    if (phone === null || phone === '') return null;
-    const trimmed = String(phone).replace(/[\s\-().]/g, '');
-    if (!trimmed || trimmed.length > 40) return null;
-    return trimmed;
+  // Base64 text is validated and bounded before decoding; the workbook parser
+  // enforces the byte cap itself.
+  function decodeBase64(dataBase64) {
+    if (!dataBase64 || dataBase64.length > 7 * 1024 * 1024 || !/^[A-Za-z0-9+/=\r\n]+$/.test(dataBase64)) FAIL(400, 'INVALID_STAGE_INPUT');
+    const bytes = Buffer.from(dataBase64, 'base64');
+    if (!bytes.length) FAIL(400, 'INVALID_STAGE_INPUT');
+    return bytes;
   }
   return { parse, stage, list, get, cancel, approve };
 }

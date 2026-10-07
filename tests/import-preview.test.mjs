@@ -121,3 +121,42 @@ test('import preview: row errors have bilingual safe codes without interpolated 
     assert.equal(JSON.stringify(error).includes('اسم سري'), false);
   }
 });
+
+test('import preview: pre-parsed records (XLSX path) flow through the same row logic', () => {
+  const records = [
+    { line: 1, cells: ['sourceRecordId', 'fullName', 'currency', 'agreed', 'previouslyPaid', 'remaining', 'fileNumber', 'phone'] },
+    { line: 5, cells: ['xl-1', 'مريض ورقة عمل', 'SAR', '800', '300', '500', '0777', '777 000 111'] },
+    { line: 9, cells: ['xl-2', 'مريض ثان', 'SAR', '?,?,0', '', '', '', ''] },
+  ];
+  const result = previewLegacyImport({ records, sourceSystem: 'desktop', fileHash: hash, headerMap: IMPORT_HEADERS.en });
+  assert.equal(result.summary.totalRows, 2);
+  assert.equal(result.rows[0].sourceLine, 5);
+  assert.equal(result.rows[0].data.calculatedRemaining, '500.00');
+  // Records path keeps the same human-review semantics as the CSV path.
+  const matched = previewLegacyImport({ records: records.slice(0, 2), sourceSystem: 'desktop', fileHash: hash,
+    headerMap: IMPORT_HEADERS.en, identityCandidates: [{ fileNumber: '0777', patientId: 'p-x' }] });
+  assert.deepEqual(matched.rows[0].candidates, ['p-x']);
+});
+
+test('import preview: records path enforces bounds and shape without parsing csv', () => {
+  const headerRow = { line: 1, cells: ['sourceRecordId', 'fullName', 'currency', 'agreed', 'previouslyPaid', 'remaining', 'fileNumber', 'phone'] };
+  assert.throws(() => previewLegacyImport({ records: [headerRow], sourceSystem: 'desktop', fileHash: hash, headerMap: IMPORT_HEADERS.en }), /EMPTY_FILE/);
+  assert.throws(() => previewLegacyImport({ records: 'nope', sourceSystem: 'desktop', fileHash: hash, headerMap: IMPORT_HEADERS.en }), /INVALID_OPTIONS/);
+  const bad = { ...headerRow, cells: 'nope' };
+  assert.throws(() => previewLegacyImport({ records: [headerRow, bad], sourceSystem: 'desktop', fileHash: hash, headerMap: IMPORT_HEADERS.en }), /INVALID_OPTIONS/);
+  const tooWide = { line: 2, cells: Array.from({ length: 65 }, () => 'x') };
+  assert.throws(() => previewLegacyImport({ records: [headerRow, tooWide], sourceSystem: 'desktop', fileHash: hash, headerMap: IMPORT_HEADERS.en }), /INVALID_OPTIONS/);
+  const many = [headerRow, ...Array.from({ length: 10001 }, (_, i) => ({ line: i + 2, cells: [`r${i}`, 'اسم مقبول', 'SAR', '1', '0', '1', '', ''] }))];
+  assert.throws(() => previewLegacyImport({ records: many, sourceSystem: 'desktop', fileHash: hash, headerMap: IMPORT_HEADERS.en }), /ROW_LIMIT/);
+});
+
+test('import preview: normalized phone candidates propose review without merging', () => {
+  const result = preview('1,مريض أول,SAR,100,0,100,,777-000-001\n2,مريض ثان,SAR,200,0,200,0500,777000002', {
+    identityCandidates: [{ phone: '777 (000) 001', patientId: 'p-1' }, { phone: '777-000-003', patientId: 'p-2' }, { fileNumber: '0500', patientId: 'p-3' }],
+  });
+  assert.deepEqual(result.rows.map(x => x.candidates), [['p-1'], ['p-3']]);
+  assert.ok(result.rows.every(x => x.canAutoMerge === false));
+  assert.equal(result.summary.rejectedRows, 0);
+  // A candidate reference with neither file number nor phone is a caller bug.
+  assert.throws(() => preview('1,مريض,SAR,100,0,100,,', { identityCandidates: [{ patientId: 'p-9' }] }), /INVALID_OPTIONS/);
+});
